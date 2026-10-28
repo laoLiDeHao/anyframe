@@ -1,0 +1,33 @@
+{
+  "name": "@anyframe/agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AnyFrame 本地助手 —— Web 版的能力代理，常驻本机 127.0.0.1",
+  "type": "module",
+  "bin": {
+    "anyframe-agent": "./dist/agent.cjs"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+
+    "dist:sea": "pnpm build && node scripts/build-sea.mjs",
+    "dist:portable": "pnpm build && node scripts/build-portable.mjs",
+
+    "install:service:win": "node scripts/install-service.mjs --platform=win32",
+    "install:service:linux": "node scripts/install-service.mjs --platform=linux"
+  },
+  "dependencies": {
+    "@anyframe/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "postject": "^1.0.0-alpha.6",
+    "tsup": "catalog:",
+    "tsx": "^4.19.0",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

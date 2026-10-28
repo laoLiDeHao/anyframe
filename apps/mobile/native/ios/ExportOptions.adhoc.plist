@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ─────────────────────────────────────────────────────────────
+  ExportOptions —— Ad Hoc 内部分发（真机测试）
+  ─────────────────────────────────────────────────────────────
+  产出 ipa 后可以传到蒲公英 / fir.im / 自建分发页，
+  或者直接 `xcrun devicectl device install app --device <UDID> x.ipa`。
+
+  与 ExportOptions.appstore.plist 的区别：
+    method              app-store-connect → release-testing
+    destination         不能有 upload（Ad Hoc 无处可上传）
+    signingCertificate  Apple Distribution（两者相同）
+    设备限制            只有描述文件里登记过 UDID 的设备能装
+
+  ── Ad Hoc 的 100 台限制 ──────────────────────────────────
+  每个设备类型（iPhone / iPad / Apple TV / Watch）每年度
+  最多 100 台，且**一年内只能重置一次**（在 developer 后台的
+  Membership 页面，通常在新会员年度开始时）。
+  加设备前先确认额度，别在测试临上线时才发现满了。
+
+  ── 想用 TestFlight 而不是 Ad Hoc ────────────────────────
+  TestFlight 用 app-store-connect 那份配置，
+  可以覆盖 1 万名外部测试者，不需要 UDID，
+  但每次构建都要过一轮 Beta 审核（通常几小时到一天）。
+  内部小团队快速迭代用 Ad Hoc，公测用 TestFlight。
+
+  ── 企业分发 ─────────────────────────────────────────────
+  需要 Apple Developer Enterprise Program（年费 299 美元，
+  且 2020 年后 Apple 基本不再批新账号）。
+  method 用 custom，并额外配 signingCertificate = "Apple Distribution"
+  与企业描述文件。本项目不提供该模板。
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>method</key>
+  <string>release-testing</string>
+
+  <key>teamID</key>
+  <string>__TEAM_ID__</string>
+
+  <key>signingStyle</key>
+  <string>automatic</string>
+
+  <key>signingCertificate</key>
+  <string>Apple Distribution</string>
+
+  <!-- Ad Hoc 没有上传目标，这个键必须省略或设为 export。
+       写成 upload 会直接报 "Invalid destination"。 -->
+  <key>destination</key>
+  <string>export</string>
+
+  <key>uploadSymbols</key>
+  <false/>
+
+  <key>stripSwiftSymbols</key>
+  <true/>
+
+  <!--
+    manual 签名时取消注释，描述文件类型必须是 Ad Hoc：
+    <key>provisioningProfiles</key>
+    <dict>
+      <key>__BUNDLE_ID__</key>
+      <string>AnyFrame AdHoc Profile</string>
+    </dict>
+  -->
+</dict>
+</plist>

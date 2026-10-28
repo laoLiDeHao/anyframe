@@ -1,0 +1,79 @@
+# ── 依赖 ──────────────────────────────────────────────────
+node_modules/
+.pnpm-store/
+
+# ── 构建产物 ──────────────────────────────────────────────
+dist/
+dist-ssr/
+release/
+build-output/
+*.tsbuildinfo
+.output/
+
+# ── Electron ─────────────────────────────────────────────
+apps/desktop/release/
+apps/desktop/dist/
+*.AppImage
+*.deb
+*.rpm
+*.snap
+*.flatpak
+
+# ── Capacitor / Android ──────────────────────────────────
+# android/ 与 ios/ 整体是**生成物**：
+# 由 `npx cap add` 产出，再由 apps/mobile/scripts/setup-native.mjs
+# 应用 native/ 下的补丁。仓库只保存补丁片段与脚本。
+#
+# 这样做的理由：Capacitor 每次大版本升级都会重写这两个目录里的
+# 模板文件（gradle 版本、AGP 版本、variables.gradle、MainActivity），
+# 手工维护整份原生工程必然在升级时冲突。
+apps/mobile/android/
+apps/mobile/ios/
+apps/mobile/build/
+apps/mobile/release/
+
+# 签名材料，任何情况下都不能提交
+keystore.properties
+*.aab
+*.apk
+*.keystore
+*.jks
+!debug.keystore
+
+# ── Capacitor / iOS ──────────────────────────────────────
+*.ipa
+*.mobileprovision
+*.p12
+*.dSYM.zip
+# build-ios.mjs 把 Team ID 写进解析后的 ExportOptions，属于本地产物
+ExportOptions.*.resolved.plist
+
+# ── Agent 单文件产物 ─────────────────────────────────────
+apps/agent/release/
+apps/agent/*.exe
+sea-prep.blob
+
+# ── 密钥（务必不要提交）───────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+secrets/
+
+# ── 编辑器 / 系统 ────────────────────────────────────────
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── 日志 ─────────────────────────────────────────────────
+*.log
+npm-debug.log*
+pnpm-debug.log*
+logs/

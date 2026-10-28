@@ -1,0 +1,881 @@
+# ═══════════════════════════════════════════════════════════════
+#  Build —— 五端产物流水线
+# ═══════════════════════════════════════════════════════════════
+#
+#  为什么不是「一个 job + matrix」而是八个并行 job：
+#    1. electron-builder **不能跨平台打包**。Windows 的 NSIS 需要
+#       Windows 上的 signtool，Linux 的 deb/rpm 需要 dpkg/rpmbuild，
+#       AppImage 需要 appimagetool。官方明确不支持交叉构建，
+#       在 Linux 上用 Wine 打 Windows 包会产出一个装了但跑不起来的 exe。
+#    2. iOS 只能在 macOS 上打。xcodebuild 没有跨平台实现，
+#       这不是配置问题，是 Apple 的许可与工具链限制。
+#    3. Android 的 AAB 反而可以在任何平台打（纯 JVM），
+#       所以它和 web / agent-linux 共用 ubuntu runner。
+#
+#  → 每个端一个 job，runner 各选各的，产物最后汇总到同一个 Release。
+#
+#  成本提示：macos runner 的分钟数是 linux 的 10 倍（GitHub 托管）。
+#  所以 mobile-ios 默认只在打 tag 或手动勾选时跑，PR 一律不跑。
+# ═══════════════════════════════════════════════════════════════
+
+name: Build
+
+on:
+  # 打 tag 即发布。版本号直接取 tag，不需要再改 package.json。
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      target:
+        description: '构建哪些端（调试单端时用，省时间也省钱）'
+        type: choice
+        default: all
+        options:
+          - all
+          - desktop-windows
+          - desktop-linux
+          - web
+          - agent
+          - android
+          - ios
+      version:
+        description: '版本号，留空则用 <package.json>-ci.<run number>'
+        type: string
+        default: ''
+      android_format:
+        description: 'Android 产物格式'
+        type: choice
+        default: both
+        options: [both, bundle, apk]
+      ios_format:
+        description: 'iOS 导出方式（appstore 会直接上传到 App Store Connect）'
+        type: choice
+        default: adhoc
+        options: [adhoc, appstore]
+      publish_release:
+        description: '构建完成后创建/更新 GitHub Release'
+        type: boolean
+        default: false
+
+# ⚠️ cancel-in-progress 必须是 false。
+# 发布构建跑到一半被取消，会在 GitHub Release 上留下一堆不完整的产物，
+# 而 latest.yml 可能已经指向了那个残缺版本 —— 客户端自动更新会下载失败。
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  # electron-builder 直接往 GitHub Release 传安装包 + latest.yml，需要写权限
+  contents: write
+
+env:
+  NO_UPDATE_NOTIFIER: '1'
+  FORCE_COLOR: '1'
+
+jobs:
+  # ─────────────────────────────────────────────────────────
+  # 0. 计算版本、发布标记、构建范围、签名密钥是否齐备
+  # ─────────────────────────────────────────────────────────
+  # 单独抽一个 job 的原因：版本号要同时喂给 electron-builder（改 package.json）、
+  # Android（ANYFRAME_VERSION_NAME/_CODE）、iOS（MARKETING_VERSION）和 Release 标题。
+  # 每个 job 自己算一遍，早晚会出现「安装包叫 1.4.0，Release 标题是 1.4.1」。
+  meta:
+    name: 版本与范围
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.calc.outputs.version }}
+      # iOS 的 CFBundleShortVersionString 只接受点分数字，
+      # 带 -ci.42 这种后缀会被 App Store Connect 判为无效版本。
+      version_ios: ${{ steps.calc.outputs.version_ios }}
+      version_code: ${{ steps.calc.outputs.version_code }}
+      release_tag: ${{ steps.calc.outputs.release_tag }}
+      is_release: ${{ steps.calc.outputs.is_release }}
+      # 传给 electron-builder 的 --publish：
+      #   always → 自己建 Release 并生成 latest.yml（自动更新要用）
+      #   never  → 只产出文件，不联网
+      # 用 never 时不会生成 latest.yml，所以正式构建必须走 always。
+      publish_flag: ${{ steps.calc.outputs.publish_flag }}
+      want_desktop_windows: ${{ steps.calc.outputs.want_desktop_windows }}
+      want_desktop_linux: ${{ steps.calc.outputs.want_desktop_linux }}
+      want_web: ${{ steps.calc.outputs.want_web }}
+      want_agent: ${{ steps.calc.outputs.want_agent }}
+      want_android: ${{ steps.calc.outputs.want_android }}
+      want_ios: ${{ steps.calc.outputs.want_ios }}
+      has_win_signing: ${{ steps.calc.outputs.has_win_signing }}
+      has_android_signing: ${{ steps.calc.outputs.has_android_signing }}
+      has_ios_signing: ${{ steps.calc.outputs.has_ios_signing }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: calc
+        shell: bash
+        env:
+          TARGET: ${{ inputs.target || 'all' }}
+          VERSION_OVERRIDE: ${{ inputs.version || '' }}
+          PUBLISH_INPUT: ${{ inputs.publish_release || false }}
+          # 只判断「有没有配」，绝不把值本身打印出来
+          WIN_CERT: ${{ secrets.WIN_CSC_LINK_BASE64 }}
+          AZURE_TENANT: ${{ secrets.AZURE_TENANT_ID }}
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          IOS_TEAM: ${{ secrets.IOS_TEAM_ID }}
+          IOS_ASC_KEY: ${{ secrets.IOS_ASC_KEY_BASE64 }}
+        run: |
+          set -euo pipefail
+
+          BASE=$(node -p "require('./package.json').version")
+
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            # tag 触发：tag 名就是版本号，这是唯一的真相源
+            VERSION="${GITHUB_REF#refs/tags/v}"
+            TAG="$GITHUB_REF_NAME"
+            RELEASE=true
+          elif [[ -n "$VERSION_OVERRIDE" ]]; then
+            VERSION="$VERSION_OVERRIDE"
+            TAG="v$VERSION"
+            RELEASE="$PUBLISH_INPUT"
+          else
+            # 非发布构建也要有个可追溯的版本号。
+            # 用 run_number 而不是 sha：sha 会让文件名长到没法读，
+            # 而 run_number 天然递增，正好兼作 Android versionCode。
+            VERSION="${BASE}-ci.${GITHUB_RUN_NUMBER}"
+            TAG="v$VERSION"
+            RELEASE="$PUBLISH_INPUT"
+          fi
+
+          # 去掉 -prerelease 和 +build 后缀，供 iOS 使用
+          VERSION_IOS="${VERSION%%[-+]*}"
+
+          want() {
+            if [[ "$TARGET" == "all" || "$TARGET" == "$1" ]]; then
+              echo true
+            else
+              echo false
+            fi
+          }
+
+          bool() { if [[ -n "${1:-}" ]]; then echo true; else echo false; fi; }
+
+          {
+            echo "version=$VERSION"
+            echo "version_ios=$VERSION_IOS"
+            echo "version_code=$GITHUB_RUN_NUMBER"
+            echo "release_tag=$TAG"
+            echo "is_release=$RELEASE"
+            if [[ "$RELEASE" == "true" ]]; then
+              echo "publish_flag=always"
+            else
+              echo "publish_flag=never"
+            fi
+            echo "want_desktop_windows=$(want desktop-windows)"
+            echo "want_desktop_linux=$(want desktop-linux)"
+            echo "want_web=$(want web)"
+            echo "want_agent=$(want agent)"
+            echo "want_android=$(want android)"
+            echo "want_ios=$(want ios)"
+            # Windows 签名有两条路：传统 pfx（CSC_LINK）或 Azure Trusted Signing。
+            # 2026 年起 OV/EV 证书私钥被强制要求放在云 HSM 里，
+            # 新项目基本只能走 Azure，所以两个都认。
+            if [[ -n "$WIN_CERT" || -n "$AZURE_TENANT" ]]; then
+              echo "has_win_signing=true"
+            else
+              echo "has_win_signing=false"
+            fi
+            echo "has_android_signing=$(bool "$ANDROID_KEYSTORE")"
+            if [[ -n "$IOS_TEAM" && -n "$IOS_ASC_KEY" ]]; then
+              echo "has_ios_signing=true"
+            else
+              echo "has_ios_signing=false"
+            fi
+          } >> "$GITHUB_OUTPUT"
+
+          echo "### 构建参数" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- 版本：\`$VERSION\`（iOS 用 \`$VERSION_IOS\`）" >> "$GITHUB_STEP_SUMMARY"
+          echo "- versionCode / build number：\`$GITHUB_RUN_NUMBER\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- 发布：\`$RELEASE\`　tag：\`$TAG\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- 构建范围：\`$TARGET\`" >> "$GITHUB_STEP_SUMMARY"
+
+          # 缺签名密钥不是错误（比如 fork 上跑 CI），但要显眼地警告一次。
+          # 未签名的包在用户那边表现为「Chrome 拦截 + SmartScreen 红字」，
+          # 比构建失败难查得多。
+          # 只对本次真正要构建的端发警告 —— 只打 Android 时提醒缺 Windows
+          # 证书纯属噪音，警告多了就没人看了。
+          if [[ "$(want desktop-windows)" == "true" && -z "$WIN_CERT$AZURE_TENANT" ]]; then
+            echo "::warning::未配置 Windows 签名密钥（WIN_CSC_LINK_BASE64 或 AZURE_TENANT_ID），产物未签名，用户下载时会被 SmartScreen 拦截。"
+          fi
+          if [[ "$(want android)" == "true" && -z "$ANDROID_KEYSTORE" ]]; then
+            echo "::warning::未配置 ANDROID_KEYSTORE_BASE64，Android 产物为 debug 签名或无签名，可以安装测试但不能上传 Google Play。"
+          fi
+          if [[ "$(want ios)" == "true" && ( -z "$IOS_TEAM" || -z "$IOS_ASC_KEY" ) ]]; then
+            echo "::warning::未配置 IOS_TEAM_ID / IOS_ASC_KEY_BASE64，mobile-ios job 将被跳过（iOS 端没有产物）。"
+          fi
+
+  # ─────────────────────────────────────────────────────────
+  # 1. Windows 桌面端（NSIS 安装包 + 便携版，x64 / arm64）
+  # ─────────────────────────────────────────────────────────
+  desktop-windows:
+    name: Windows 桌面端
+    needs: meta
+    if: needs.meta.outputs.want_desktop_windows == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-pnpm
+        with:
+          node-version: '22'
+
+      - name: 盖章版本号
+        shell: bash
+        run: node scripts/set-version.mjs "${{ needs.meta.outputs.version }}"
+
+      # pfx 证书以 base64 存在 secret 里，构建前还原成文件。
+      # 不要把 base64 字符串直接塞给 CSC_LINK —— electron-builder 支持
+      # data: 前缀的 base64，但超过 Windows 环境变量长度上限（32767 字符）
+      # 就会静默截断，然后报一个和证书毫无关系的解析错误。
+      - name: 还原代码签名证书
+        if: needs.meta.outputs.has_win_signing == 'true' && secrets.WIN_CSC_LINK_BASE64 != ''
+        shell: bash
+        env:
+          CSC_B64: ${{ secrets.WIN_CSC_LINK_BASE64 }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$CSC_B64" | base64 -d > codesign.pfx
+          echo "CSC_LINK=$PWD/codesign.pfx" >> "$GITHUB_ENV"
+          ls -l codesign.pfx
+
+      - name: 构建安装包
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          # Azure Trusted Signing 三件套。electron-builder 26 会自己读取，
+          # 配合 electron-builder.yml 里被注释掉的 azureSignOptions 一起启用。
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          pnpm build
+          # 不用 pnpm dist:win —— 那条脚本没带 --publish，
+          # electron-builder 会照着 electron-builder.yml 里的 publish: github
+          # 自行决定行为，CI 上表现为「有时传有时不传」，很难排查。
+          pnpm --filter @anyframe/desktop exec \
+            electron-builder --win --publish "${{ needs.meta.outputs.publish_flag }}"
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: anyframe-desktop-windows
+          path: |
+            apps/desktop/release/**/*.exe
+            apps/desktop/release/**/*.blockmap
+            apps/desktop/release/**/latest*.yml
+          if-no-files-found: error
+          retention-days: 30
+
+  # ─────────────────────────────────────────────────────────
+  # 2. Ubuntu 桌面端（deb + rpm + AppImage，x64 / arm64）
+  # ─────────────────────────────────────────────────────────
+  desktop-linux:
+    name: Ubuntu 桌面端
+    needs: meta
+    if: needs.meta.outputs.want_desktop_linux == 'true'
+    # 固定 24.04 而不是 latest：Noble 起 libasound2 改名 libasound2t64，
+    # 在旧镜像上打的 deb 会写错依赖名，用户装的时候报「依赖无法满足」。
+    # 详见 apps/desktop/electron-builder.yml 里的说明。
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-pnpm
+        with:
+          node-version: '22'
+
+      # rpm 打包需要 rpmbuild，ubuntu 镜像默认没有。
+      # 少了它会报 "cannot find rpm" —— 而这个错误出现在构建的第 8 分钟。
+      - name: 安装 Linux 打包工具链
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends rpm libarchive-tools
+          rpmbuild --version
+
+      - name: 盖章版本号
+        run: node scripts/set-version.mjs "${{ needs.meta.outputs.version }}"
+
+      - name: 构建安装包
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          pnpm build
+          pnpm --filter @anyframe/desktop exec \
+            electron-builder --linux --publish "${{ needs.meta.outputs.publish_flag }}"
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: anyframe-desktop-linux
+          path: |
+            apps/desktop/release/**/*.deb
+            apps/desktop/release/**/*.rpm
+            apps/desktop/release/**/*.AppImage
+            apps/desktop/release/**/latest*.yml
+          if-no-files-found: error
+          retention-days: 30
+
+  # ─────────────────────────────────────────────────────────
+  # 3. Web 端（纯静态，配合本机 Agent 获得完整能力）
+  # ─────────────────────────────────────────────────────────
+  web:
+    name: Web 端
+    needs: meta
+    if: needs.meta.outputs.want_web == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-pnpm
+        with:
+          node-version: '22'
+          skip-electron-binary: '1'
+
+      - name: 盖章版本号
+        run: node scripts/set-version.mjs "${{ needs.meta.outputs.version }}"
+
+      - name: 构建静态站点
+        env:
+          # 部署到 GitHub Pages 的项目子路径时需要 /<repo>/。
+          # 用仓库变量控制，不用改代码：Settings → Secrets and variables → Actions。
+          BASE_PATH: ${{ vars.WEB_BASE_PATH || '/' }}
+        run: pnpm build:web
+
+      - name: 打包产物
+        run: |
+          set -euo pipefail
+          cd apps/web/dist
+          # 单文件 zip，方便直接扔到任意静态托管或 Nginx 根目录
+          zip -qr ../../../anyframe-web-${{ needs.meta.outputs.version }}.zip .
+          cd -
+          ls -lh anyframe-web-*.zip
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: anyframe-web
+          path: anyframe-web-*.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  # ─────────────────────────────────────────────────────────
+  # 4/5. 本地 Agent（Node SEA 单文件可执行程序）
+  # ─────────────────────────────────────────────────────────
+  # Agent 是 Web 版的能力来源，跑在用户本机。
+  # SEA 把 JS blob 注入 node 二进制，所以**必须在目标平台上打**：
+  # Windows 上产出 .exe，Linux 上产出 ELF。没有交叉编译一说。
+  agent-windows:
+    name: Agent (Windows)
+    needs: meta
+    if: needs.meta.outputs.want_agent == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-pnpm
+        with:
+          node-version: '22'
+          skip-electron-binary: '1'
+
+      - name: 盖章版本号
+        shell: bash
+        run: node scripts/set-version.mjs "${{ needs.meta.outputs.version }}"
+
+      - name: 构建单文件可执行程序
+        shell: bash
+        env:
+          # tsup 的 define 会把版本号固化进产物。SEA 单文件里没有
+          # package.json，运行时也没有 CI 的环境变量，只能在构建时替换。
+          ANYFRAME_AGENT_VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          pnpm build            # 先出 packages/core/dist，tsup 的 noExternal 要读它
+          pnpm --filter @anyframe/agent dist:sea
+          mv apps/agent/release/anyframe-agent.exe \
+             "apps/agent/release/anyframe-agent-${{ needs.meta.outputs.version }}-win-x64.exe"
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: anyframe-agent-windows
+          path: apps/agent/release/*.exe
+          if-no-files-found: error
+          retention-days: 30
+
+  agent-linux:
+    name: Agent (Linux)
+    needs: meta
+    if: needs.meta.outputs.want_agent == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-pnpm
+        with:
+          node-version: '22'
+          skip-electron-binary: '1'
+
+      - name: 盖章版本号
+        run: node scripts/set-version.mjs "${{ needs.meta.outputs.version }}"
+
+      - name: 构建单文件可执行程序
+        env:
+          ANYFRAME_AGENT_VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          pnpm build
+          pnpm --filter @anyframe/agent dist:sea
+          chmod +x apps/agent/release/anyframe-agent
+          mv apps/agent/release/anyframe-agent \
+             "apps/agent/release/anyframe-agent-${{ needs.meta.outputs.version }}-linux-x64"
+
+      - name: 冒烟测试
+        run: |
+          set -uo pipefail
+          bin=$(ls apps/agent/release/anyframe-agent-*-linux-x64)
+          # 必须加 timeout：Agent 不带参数时会去监听端口并常驻，
+          # 忘了的话这一步会一直挂到 job 超时（25 分钟），
+          # 而日志里看不到任何异常。--help 会打印帮助后正常退出。
+          if timeout 30s "$bin" --help; then
+            echo "✓ SEA 产物可执行，--help 正常退出"
+            "$bin" --help | head -3
+          else
+            # SEA 注入失败不会报错，只会在运行时静默退出或直接段错误，
+            # 所以这里必须真跑一次，不能只检查文件存在。
+            echo "::error::$bin --help 失败。SEA blob 注入可能有问题，检查 postject 步骤是否被跳过。"
+            exit 1
+          fi
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: anyframe-agent-linux
+          path: apps/agent/release/anyframe-agent-*
+          if-no-files-found: error
+          retention-days: 30
+
+  # ─────────────────────────────────────────────────────────
+  # 6. Android（AAB 上架 + APK 直装）
+  # ─────────────────────────────────────────────────────────
+  mobile-android:
+    name: Android
+    needs: meta
+    if: needs.meta.outputs.want_android == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-pnpm
+        with:
+          node-version: '22'
+          skip-electron-binary: '1'
+
+      # Capacitor 8 / AGP 8.x 要求 JDK 21。
+      # 用 JDK 17 的报错是 "Unsupported class file major version 65"，
+      # 完全看不出是 JDK 版本问题，所以这里显式钉死。
+      - name: 安装 JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: 确认 Android SDK
+        run: |
+          set -uo pipefail
+          echo "ANDROID_HOME=${ANDROID_HOME:-未设置}"
+          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-未设置}"
+          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          # Gradle 能自动下载缺失的 platform/build-tools，前提是 license 已接受。
+          # GitHub 镜像默认接受过，但这里再喂一次以防镜像变更。
+          if [ -x "$SDK/cmdline-tools/latest/bin/sdkmanager" ]; then
+            yes 2>/dev/null | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+          fi
+          # Capacitor 8 = compileSdk 36。缺了它 Gradle 会自己下，
+          # 提前装可以避免下载发生在 --stacktrace 里，日志更难读。
+          if [ -x "$SDK/cmdline-tools/latest/bin/sdkmanager" ]; then
+            "$SDK/cmdline-tools/latest/bin/sdkmanager" \
+              "platforms;android-36" "build-tools;36.0.0" "platform-tools" >/dev/null 2>&1 || true
+          fi
+          java -version
+
+      - name: 盖章版本号
+        run: node scripts/set-version.mjs "${{ needs.meta.outputs.version }}"
+
+      - name: 还原签名 keystore
+        if: needs.meta.outputs.has_android_signing == 'true'
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$KS_B64" | base64 -d > android-keystore.jks
+          # 校验一下确实是 keystore，而不是 base64 编错的文本。
+          # 错了的话 Gradle 会报 "Keystore was tampered with, or password was incorrect"，
+          # 那已经是构建的第 6 分钟了；一条 keytool 能提前到第 1 分钟。
+          if keytool -list -keystore android-keystore.jks -storepass "$KS_PASSWORD" >/dev/null 2>&1; then
+            echo "✓ keystore 可读，包含的别名："
+            keytool -list -keystore android-keystore.jks -storepass "$KS_PASSWORD" \
+              | grep -i 'Alias name' || true
+          else
+            echo "::error::keystore 或密码无效，请检查 ANDROID_KEYSTORE_BASE64 与 ANDROID_KEYSTORE_PASSWORD。base64 必须是对 .jks 二进制整体编码（base64 -w0 release.jks），不是对文本编码。"
+            exit 1
+          fi
+
+      - name: 生成原生工程并构建
+        env:
+          ANYFRAME_ANDROID_FORMAT: ${{ inputs.android_format || 'both' }}
+          ANYFRAME_VERSION_NAME: ${{ needs.meta.outputs.version }}
+          ANYFRAME_VERSION_CODE: ${{ needs.meta.outputs.version_code }}
+          ANYFRAME_ABI_SPLIT: ${{ vars.ANDROID_ABI_SPLIT || '0' }}
+          # 只在密钥齐备时强制要求签名。
+          # fork 上的 PR 拿不到 secret，这时用 debug 签名产出一个能装的包，
+          # 至少验证了「编译打得通」，比整个 job 红掉有用。
+          ANYFRAME_REQUIRE_SIGNING: ${{ needs.meta.outputs.has_android_signing == 'true' && '1' || '0' }}
+          ANYFRAME_ANDROID_STORE_FILE: ${{ github.workspace }}/android-keystore.jks
+          ANYFRAME_ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANYFRAME_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANYFRAME_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # 顺序不能乱：
+          #   1. 先出 Web 产物（cap add/sync 会把它拷进 assets/public）
+          #   2. 再 setup:native 生成 android/ 工程并打补丁
+          #   3. 最后 dist:android 跑 Gradle
+          # 反过来做会得到一个 assets/public 为空的工程，
+          # App 装上后是纯白页 —— 而且不报任何错。
+          pnpm build:mobile
+          pnpm --filter @anyframe/mobile setup:native android
+          pnpm --filter @anyframe/mobile dist:android
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: anyframe-android
+          path: |
+            apps/mobile/release/**/*.aab
+            apps/mobile/release/**/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      # mapping.txt 单独一个 artifact，不要和 apk 混在一起。
+      # 它是 R8 混淆映射，**不该出现在 Release 附件里**（谁都能下载就等于公开了
+      # 反混淆字典），但必须长期留存，否则线上崩溃栈永远是一堆 a.b.c。
+      - name: 上传混淆映射（不进 Release）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: anyframe-android-mapping
+          path: apps/mobile/release/**/mapping-*.txt
+          if-no-files-found: warn
+          # 保留一年：Play 上旧版本的崩溃可能几个月后才出现
+          retention-days: 365
+
+  # ─────────────────────────────────────────────────────────
+  # 7. iOS（只能在 macOS 上打）
+  # ─────────────────────────────────────────────────────────
+  # 没有 macOS **桌面**端产物，但 iOS 端必须有 macOS runner。
+  # 缺 Apple 签名密钥时整个 job 跳过，而不是失败 —— 这样 fork 和
+  # 尚未申请开发者账号的阶段，其余七端照样能出产物。
+  mobile-ios:
+    name: iOS
+    needs: meta
+    if: >-
+      needs.meta.outputs.want_ios == 'true' &&
+      needs.meta.outputs.has_ios_signing == 'true'
+    # Xcode 26 需要较新的 macOS 镜像。若 runner 上没有 Xcode 26，
+    # 下一步会明确报错并列出镜像里装了哪些版本，据此改这里。
+    # 也可以在仓库变量里设 IOS_RUNNER_LABEL 覆盖，不用改工作流。
+    runs-on: ${{ vars.IOS_RUNNER_LABEL || 'macos-15' }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-pnpm
+        with:
+          node-version: '22'
+          skip-electron-binary: '1'
+
+      - name: 选择 Xcode 26+
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "镜像内可用的 Xcode："
+          ls -d /Applications/Xcode*.app 2>/dev/null || echo "  (无)"
+
+          # 版本号倒序遍历，选中第一个 >= 26 的
+          for app in $(ls -d /Applications/Xcode*.app 2>/dev/null | sort -rV); do
+            major=$(defaults read "$app/Contents/version" CFBundleShortVersionString 2>/dev/null | cut -d. -f1)
+            if [[ "${major:-0}" =~ ^[0-9]+$ ]] && (( major >= 26 )); then
+              sudo xcode-select -s "$app/Contents/Developer"
+              echo "→ 选中 $app"
+              break
+            fi
+          done
+
+          sudo xcodebuild -license accept 2>/dev/null || true
+          xcodebuild -version || true
+
+          current=$(xcodebuild -version 2>/dev/null | head -1 | awk '{print $2}' | cut -d. -f1)
+          if [[ ! "${current:-0}" =~ ^[0-9]+$ ]] || (( current < 26 )); then
+            echo "::error::runner 上没有 Xcode 26+（当前 ${current:-未知}）。"
+            echo "Capacitor 8 要求 Xcode 26；且自 2026-04-28 起 App Store Connect"
+            echo "直接拒绝用旧 Xcode 构建的包，不会给任何提示。"
+            echo "解法：把 runs-on 换成带 Xcode 26 的镜像标签（例如 macos-15 的较新版本），"
+            echo "或在仓库变量 IOS_RUNNER_LABEL 里指定。"
+            exit 1
+          fi
+
+      - name: 确认 CocoaPods
+        run: |
+          set -uo pipefail
+          if ! command -v pod >/dev/null 2>&1; then
+            echo "→ 未找到 pod，用 brew 安装"
+            brew install cocoapods
+          fi
+          pod --version
+
+      - name: 盖章版本号
+        # iOS 用去掉后缀的版本号，CFBundleShortVersionString 只认点分数字
+        run: node scripts/set-version.mjs "${{ needs.meta.outputs.version_ios }}"
+
+      - name: 写入 App Store Connect API Key
+        env:
+          ASC_KEY_ID: ${{ secrets.IOS_ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.IOS_ASC_ISSUER_ID }}
+          ASC_KEY_B64: ${{ secrets.IOS_ASC_KEY_BASE64 }}
+        run: |
+          set -euo pipefail
+          # 标准搜索路径。放这里 xcodebuild 会自动发现，
+          # 不用改 build-ios.mjs 去传 -authenticationKeyPath。
+          dir="$HOME/.appstoreconnect/private_keys"
+          mkdir -p "$dir"
+          key="$dir/AuthKey_${ASC_KEY_ID}.p8"
+          # macOS 的 base64 是 BSD 版，-d 行为与 GNU 不完全一致；
+          # openssl 两边都有且语义统一，用它最省心。
+          # -A 表示输入不含换行（GitHub secret 会去掉尾部换行）。
+          printf '%s' "$ASC_KEY_B64" | openssl enc -base64 -d -A > "$key"
+          chmod 600 "$key"
+          echo "✓ 已写入 $key"
+
+      - name: 生成原生工程并构建
+        env:
+          ANYFRAME_IOS_FORMAT: ${{ inputs.ios_format || 'adhoc' }}
+          ANYFRAME_IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+          ANYFRAME_IOS_ASC_KEY_ID: ${{ secrets.IOS_ASC_KEY_ID }}
+          ANYFRAME_IOS_ASC_ISSUER_ID: ${{ secrets.IOS_ASC_ISSUER_ID }}
+          ANYFRAME_VERSION_NAME: ${{ needs.meta.outputs.version_ios }}
+          ANYFRAME_VERSION_CODE: ${{ needs.meta.outputs.version_code }}
+        run: |
+          set -euo pipefail
+          pnpm build:mobile
+          pnpm --filter @anyframe/mobile setup:native ios
+          pnpm --filter @anyframe/mobile dist:ios
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: anyframe-ios
+          path: |
+            apps/mobile/release/**/*.ipa
+            apps/mobile/release/**/DistributionSummary-*.plist
+          if-no-files-found: error
+          retention-days: 30
+
+      # dSYM 与 Android 的 mapping.txt 同理：不进 Release，但要长期留档。
+      # 没有它，Xcode Organizer 里的崩溃栈全是十六进制地址。
+      - name: 上传符号表（不进 Release）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: anyframe-ios-dsym
+          path: apps/mobile/release/**/*.dSYM.zip
+          if-no-files-found: warn
+          retention-days: 365
+
+  # ─────────────────────────────────────────────────────────
+  # 8. 汇总产物 → GitHub Release
+  # ─────────────────────────────────────────────────────────
+  # always() 是刻意的：五个端里挂掉一个，其余四个的产物照样应该发出去，
+  # 而不是让一次 macOS runner 抽风毁掉整个发布。
+  # 代价是可能出现「不完整的 Release」，所以 job 里会把失败项写进发布说明。
+  release:
+    name: 汇总并发布 Release
+    needs:
+      - meta
+      - desktop-windows
+      - desktop-linux
+      - web
+      - agent-windows
+      - agent-linux
+      - mobile-android
+      - mobile-ios
+    if: >-
+      always() && !cancelled() &&
+      needs.meta.result == 'success' &&
+      needs.meta.outputs.is_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # 被跳过的 job（比如没配 iOS 密钥）不会产出 artifact，
+      # download-artifact 找不到匹配时会报错，所以 continue-on-error。
+      - name: 下载全部产物
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: anyframe-*
+          merge-multiple: false
+        continue-on-error: true
+
+      - name: 清点产物
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "收集到的文件："
+          if [ -d artifacts ]; then
+            find artifacts -type f -printf '  %10s  %p\n' | sort -k2
+          else
+            echo "  （空）"
+          fi
+
+          # mapping.txt / dSYM 属于内部资料，绝不能混进公开发布的 Release。
+          # 这里主动删掉，而不是指望上传时的 glob 写对 —— 写错一次就永久泄露。
+          find artifacts -type f \( -name 'mapping-*.txt' -o -name '*.dSYM.zip' \) \
+            -print -delete 2>/dev/null || true
+
+      - name: 生成发布说明
+        shell: bash
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+          TAG: ${{ needs.meta.outputs.release_tag }}
+          R_WIN: ${{ needs.desktop-windows.result }}
+          R_LIN: ${{ needs.desktop-linux.result }}
+          R_WEB: ${{ needs.web.result }}
+          R_AW: ${{ needs.agent-windows.result }}
+          R_AL: ${{ needs.agent-linux.result }}
+          R_AND: ${{ needs.mobile-android.result }}
+          R_IOS: ${{ needs.mobile-ios.result }}
+        run: |
+          set -uo pipefail
+
+          mark() {
+            case "$1" in
+              success) echo '✅ 成功' ;;
+              skipped) echo '⏭️ 跳过' ;;
+              failure) echo '❌ 失败' ;;
+              cancelled) echo '🚫 取消' ;;
+              *) echo "❓ $1" ;;
+            esac
+          }
+
+          {
+            echo "## AnyFrame $VERSION"
+            echo
+            echo "构建：[$GITHUB_RUN_NUMBER]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID) · 提交 \`${GITHUB_SHA:0:7}\`"
+            echo
+            echo "### 五端构建结果"
+            echo
+            echo "| 端 | 状态 | 产物 |"
+            echo "| --- | --- | --- |"
+            echo "| Windows 桌面 | $(mark "$R_WIN") | NSIS 安装包 + 便携版（x64 / arm64） |"
+            echo "| Ubuntu 桌面 | $(mark "$R_LIN") | deb + rpm + AppImage（x64 / arm64） |"
+            echo "| Web | $(mark "$R_WEB") | 静态站点 zip（配合本机 Agent） |"
+            echo "| Android | $(mark "$R_AND") | AAB（上架）+ APK（直装） |"
+            echo "| iOS | $(mark "$R_IOS") | IPA（adhoc 或已上传 App Store Connect） |"
+            echo "| Agent · Windows | $(mark "$R_AW") | 单文件 exe |"
+            echo "| Agent · Linux | $(mark "$R_AL") | 单文件可执行 |"
+            echo
+            echo "### 安装说明"
+            echo
+            echo "**Windows** — 运行 \`AnyFrame-Setup-*-win-x64.exe\`。未签名时 SmartScreen 会拦截，点「更多信息 → 仍要运行」。"
+            echo
+            echo "**Ubuntu** — \`sudo apt install ./AnyFrame-*-linux-x64.deb\`。AppImage 需要先装 FUSE：Ubuntu 24.04 用 \`sudo apt install libfuse2t64\`，22.04 用 \`libfuse2\`。"
+            echo
+            echo "**Web** — 解压 zip 到任意静态托管。文件读写与本地服务需要另外安装 Agent（\`anyframe-agent-*\`），装好后页面会自动探测到。"
+            echo
+            echo "**Android** — APK 可直接安装；AAB 用于上传 Google Play。若本次构建未配置签名，产物为 debug 签名，不能上架。"
+            echo
+            echo "**iOS** — adhoc 包需设备 UDID 已登记在开发者账号里；appstore 模式下 ipa 已直接上传，到 TestFlight 查看处理状态（约 5~30 分钟）。"
+            echo
+            echo "### 各端能力差异"
+            echo
+            echo "同一套代码在五端的能力上限不同，UI 会把不可用的功能显示为「禁用 + 原因」而不是隐藏："
+            echo
+            echo "- **启动本地服务**：Windows / Ubuntu 桌面可拉起任意外部进程；Web 依赖本机 Agent；Android 以内嵌前台服务方式提供；iOS 只能内嵌，且受审核指南 2.5.2 约束，永远无法 \`spawn\` 外部程序。"
+            echo "- **文件读写**：桌面端可访问用户主目录；Web 经 Agent 访问本机；移动端限制在应用沙箱内。"
+            echo "- **硬件**：BLE 是唯一五端都通的通道。Web Serial 在 Safari 与所有 iOS 浏览器上不可用（WebKit 策略），iOS 有线串口还需 MFi 认证。"
+          } > notes.md
+
+          # 有失败项时在开头插一段醒目提示。
+          # 「不完整的 Release」比「没有 Release」更危险：用户可能下到一个
+          # 缺了某端的版本却毫不知情。
+          if [[ "$R_WIN$R_LIN$R_WEB$R_AW$R_AL$R_AND$R_IOS" == *failure* || \
+                "$R_WIN$R_LIN$R_WEB$R_AW$R_AL$R_AND$R_IOS" == *cancelled* ]]; then
+            {
+              echo "> ⚠️ **本次发布不完整**：下表中标记为 ❌ / 🚫 的端构建失败。"
+              echo "> 对应平台的用户仍然停留在上一个版本，请修复后重新打 tag。"
+              echo
+              cat notes.md
+            } > notes.tmp && mv notes.tmp notes.md
+          fi
+
+      - name: 创建 / 更新 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.meta.outputs.release_tag }}
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          set -uo pipefail
+
+          # tag 触发时 electron-builder 已经用 --publish always 建过 Release
+          # （并且只有它会生成 latest.yml，自动更新依赖那个文件）。
+          # 所以这里判断存在与否：存在就改说明并追加产物，不存在才新建。
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "→ Release $TAG 已存在，更新说明并追加产物"
+            gh release edit "$TAG" --title "AnyFrame $VERSION" --notes-file notes.md
+          else
+            echo "→ 创建 Release $TAG"
+            gh release create "$TAG" \
+              --title "AnyFrame $VERSION" \
+              --notes-file notes.md
+          fi
+
+          if [ ! -d artifacts ]; then
+            echo "::warning::没有任何产物可上传"
+            exit 0
+          fi
+
+          # --clobber：同名附件直接覆盖。重跑 job 时不会因为「已存在」而失败。
+          # 用 xargs -0 而不是 shell 展开，避免文件名里有空格时被拆开。
+          find artifacts -type f -print0 \
+            | xargs -0 -r gh release upload "$TAG" --clobber
+
+          echo "→ 已上传 $(find artifacts -type f | wc -l) 个文件"
+
+      - name: 输出 Release 链接
+        if: always()
+        env:
+          TAG: ${{ needs.meta.outputs.release_tag }}
+        run: |
+          echo "### 发布结果" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Release：$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG" >> "$GITHUB_STEP_SUMMARY"

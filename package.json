@@ -1,0 +1,49 @@
+{
+  "name": "anyframe",
+  "version": "0.1.0",
+  "private": true,
+  "description": "一套代码 → Windows 桌面 / Ubuntu 桌面 / Web / Android / iOS 五端构建工程",
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=9.5.0"
+  },
+  "scripts": {
+    "check-env": "node scripts/check-env.mjs",
+
+    "build": "pnpm -r build",
+    "build:core": "pnpm --filter @anyframe/core build",
+    "build:all": "pnpm -r build",
+
+    "dev:desktop": "pnpm --filter @anyframe/desktop dev",
+    "dev:web": "pnpm --filter @anyframe/web dev",
+    "dev:agent": "pnpm --filter @anyframe/agent dev",
+    "dev:mobile": "pnpm --filter @anyframe/mobile dev",
+
+    "build:desktop": "pnpm --filter @anyframe/desktop... build",
+    "build:web": "pnpm --filter @anyframe/web... build",
+    "build:agent": "pnpm --filter @anyframe/agent... build",
+    "build:mobile": "pnpm --filter @anyframe/mobile... build",
+
+    "dist:win": "pnpm build:desktop && pnpm --filter @anyframe/desktop dist:win",
+    "dist:linux": "pnpm build:desktop && pnpm --filter @anyframe/desktop dist:linux",
+    "dist:web": "pnpm build:web",
+    "dist:android": "pnpm build:mobile && pnpm --filter @anyframe/mobile dist:android",
+    "dist:ios": "pnpm build:mobile && pnpm --filter @anyframe/mobile dist:ios",
+    "dist:agent": "pnpm build:agent && pnpm --filter @anyframe/agent dist:sea",
+
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r --parallel test",
+    "gen:icons": "node scripts/gen-icons.mjs",
+    "clean": "pnpm -r --parallel exec rimraf dist release .turbo node_modules/.vite && rimraf node_modules",
+
+    "version:set": "node scripts/set-version.mjs",
+    "version:from-tag": "node scripts/set-version.mjs --from-git-tag",
+
+    "postinstall": "node scripts/postinstall.mjs"
+  },
+  "devDependencies": {
+    "rimraf": "^6.0.0",
+    "typescript": "catalog:"
+  }
+}

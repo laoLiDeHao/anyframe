@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    // 故意**不**加 "types": ["node"]：这个包里的代码全部跑在浏览器 /
+    // WebView / Electron renderer 里，一旦允许 node:* 导入，类型检查就再也
+    // 拦不住「UI 里 require 了 fs」这种只在打包后才炸的错误。
+    // vite.config.ts 需要 node 类型，所以单独放在 tsconfig.node.json。
+    "types": [],
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "paths": {
+      "@anyframe/core": ["../core/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "exclude": ["dist", "node_modules"]
+}

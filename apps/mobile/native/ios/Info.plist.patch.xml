@@ -1,0 +1,221 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ─────────────────────────────────────────────────────────────
+  iOS Info.plist 补丁片段
+  ─────────────────────────────────────────────────────────────
+  由 scripts/setup-native.mjs 合并进 `npx cap add ios` 生成的
+  ios/App/App/Info.plist。
+
+  这个文件只列出「需要新增或覆盖的键」，不是完整 plist。
+  Capacitor 模板里的 CFBundleIdentifier / UILaunchStoryboardName 等
+  由 cap sync 维护，不要在这里重复，否则升级时冲突。
+
+  ── 移动端与桌面端最本质的差别，就体现在这份 plist 里 ──────
+  iOS 没有「常驻后台服务」这个概念，也没有 spawn。
+  下面每一个键都对应一条 App Store 审核规则或系统限制，
+  注释里写清了依据，别为了「让它能跑」去删。
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+
+  <!-- ═══════════════════════════════════════════════════════
+       1. ATS：允许 WebView 访问 http://127.0.0.1
+       ═══════════════════════════════════════════════════════
+       capacitor.config.ts 没设 iosScheme，iOS 上 WebView 的源是
+       capacitor://localhost（自定义 scheme）。它去 fetch
+       http://127.0.0.1:47810 时，走的是 WebKit 的网络栈，
+       受 App Transport Security 约束 —— 明文 HTTP 默认被拦，
+       报错是 "App Transport Security has blocked a cleartext
+       HTTP (http://) resource load since it is insecure."
+
+       解决办法有两个层次：
+         NSAllowsArbitraryLoads = true   ← 绝对不要用。
+                                          这会放行所有明文流量，
+                                          App Store 审核会要求你说明理由，
+                                          而且是真的把安全基线拆了。
+         NSAllowsLocalNetworking = true  ← 用这个（iOS 10+）。
+                                          只放行回环与本地链路，
+                                          公网 HTTPS 策略不变。
+
+       注意 NSAllowsLocalNetworking 覆盖 127.0.0.1 / localhost /
+       .local / 链路本地地址。若将来要做「手机连电脑上的 Agent」
+       （192.168.x.x 这类局域网地址），它不够，需要为具体域名加
+       NSExceptionDomains 或改用 HTTPS + 自签证书信任。 -->
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsLocalNetworking</key>
+    <true/>
+
+    <!-- 如果确定要支持「手机连同一局域网内电脑上的 Agent」，
+         取消下面的注释并填实际网段主机名。
+         ⚠️ 这会让审核问你要理由，建议同时提供用户可见的功能说明。
+    <key>NSExceptionDomains</key>
+    <dict>
+      <key>192.168.1.100</key>
+      <dict>
+        <key>NSExceptionAllowsInsecureHTTPLoads</key>
+        <true/>
+        <key>NSIncludesSubdomains</key>
+        <false/>
+      </dict>
+    </dict>
+    -->
+  </dict>
+
+  <!-- ═══════════════════════════════════════════════════════
+       2. 本地网络权限说明（iOS 14+）
+       ═══════════════════════════════════════════════════════
+       纯回环访问**不触发**本地网络权限弹窗，所以严格说这条不是必需的。
+       但加上有两个好处：
+         - 一旦代码里出现任何局域网扫描/连接，权限弹窗有正确的文案，
+           而不是被系统用默认文案糊弄过去（用户更容易拒绝）
+         - 审核时能看到你对本地网络的用途说明
+
+       ⚠️ 文案必须描述真实用途。写「为了更好的用户体验」这类空话
+          会被审核打回。
+       ⚠️ 只有这个 key 是不够的：若用 Bonjour/multicast 发现设备，
+          还必须加 NSBonjourServices 数组，否则 discovery 静默失败。 -->
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>AnyFrame 需要访问本地网络，以连接运行在你电脑上的 AnyFrame 本地服务，从而读写你指定的工作目录。</string>
+
+  <!-- ═══════════════════════════════════════════════════════
+       3. 文件共享：让 App 的 Documents 出现在「文件」App 里
+       ═══════════════════════════════════════════════════════
+       对一个以「文件读写」为核心功能的应用来说，这两条几乎是必需的。
+       不加的话，用户写进去的文件只能通过 App 自己的 UI 导出，
+       无法用系统文件管理器查看、无法被其他 App 打开。
+
+         UIFileSharingEnabled           → 在「文件」App 中显示本 App
+         LSSupportsOpeningDocumentsInPlace → 允许其他 App 直接原地打开
+                                            本 App 的文件（而不是复制一份）
+
+       第二条不加的话，「用其他应用打开」会先复制文件，
+       用户改完保存的是副本，原文件不变 —— 极易造成数据丢失的误解。 -->
+  <key>UIFileSharingEnabled</key>
+  <true/>
+  <key>LSSupportsOpeningDocumentsInPlace</key>
+  <true/>
+
+  <!-- ═══════════════════════════════════════════════════════
+       4. 后台模式
+       ═══════════════════════════════════════════════════════
+       这里**故意只加 fetch**，不加 audio / voip / location。
+
+       常见错误做法：为了让服务常驻，加一个 UIBackgroundModes=audio
+       然后循环播放一段无声音频。这是 App Store 审核指南 2.5.4
+       明确禁止的（"apps that use background audio for anything
+       other than playing actual content will be rejected"），
+       实测上架后会被自动扫描出来并下架。
+
+       能合法常驻后台的只有：audio（真在放声音）、location（真在导航）、
+       voip、newsstand、external-accessory、bluetooth-central、
+       background-fetch、remote-notification、processing。
+       一个「本地运行时」哪个都不沾边。
+
+       所以 iOS 端的能力上限就是 background = foreground-transient：
+       前台正常跑，切后台数秒后被 suspend，回前台自动恢复。
+       这个事实已经写进 packages/core/src/capabilities.ts 的 IOS 基线，
+       UI 会向用户明确说明，而不是假装能做到。
+
+       background-fetch 保留：系统会在电量/网络合适时给几十秒执行窗口，
+       适合做「同步一下状态」这类轻量工作，不适合跑服务。 -->
+  <key>UIBackgroundModes</key>
+  <array>
+    <string>fetch</string>
+  </array>
+
+  <!-- ═══════════════════════════════════════════════════════
+       5. 出口合规：免掉每次上传的加密问卷
+       ═══════════════════════════════════════════════════════
+       不设这个键，每次上传到 App Store Connect 都要在网页上
+       回答一遍加密合规问题；设成 false 之后自动跳过。
+
+       false 的含义是「只使用豁免加密」—— 即仅用 HTTPS/TLS 这类
+       标准加密。绝大多数 App 都符合。
+       如果你的应用自己实现了加密算法（非调用系统 API），
+       必须改成 true 并提交合规文件，否则是虚假申报。 -->
+  <key>ITSAppUsesNonExemptEncryption</key>
+  <false/>
+
+  <!-- ═══════════════════════════════════════════════════════
+       6. 状态栏与安全区
+       ═══════════════════════════════════════════════════════
+       Capacitor 的 @capacitor/status-bar 插件在运行时控制样式，
+       但首屏（SplashScreen 消失到 JS 执行之间）由这两个键决定，
+       不设的话会闪一下黑底白字。 -->
+  <key>UIStatusBarStyle</key>
+  <string>UIStatusBarStyleLightContent</string>
+  <key>UIViewControllerBasedStatusBarAppearance</key>
+  <false/>
+
+  <!-- 全面屏适配。Capacitor 模板通常已包含，这里显式写出以防丢失。
+       缺了它，iPhone X 之后机型的顶部内容会被状态栏盖住。 -->
+  <key>UIRequiresFullScreen</key>
+  <false/>
+  <key>UISupportedInterfaceOrientations</key>
+  <array>
+    <string>UIInterfaceOrientationPortrait</string>
+    <string>UIInterfaceOrientationLandscapeLeft</string>
+    <string>UIInterfaceOrientationLandscapeRight</string>
+  </array>
+  <!-- iPad 上支持分屏（Split View / Slide Over）。
+       注意：一旦声明支持 iPad，App Store 会要求提供 iPad 截图，
+       且 UI 必须能在 1/3 宽度下正常显示。不想适配 iPad 就把
+       TARGETED_DEVICE_FAMILY 设成 1（仅 iPhone），而不是删这个键。 -->
+  <key>UISupportedInterfaceOrientations~ipad</key>
+  <array>
+    <string>UIInterfaceOrientationPortrait</string>
+    <string>UIInterfaceOrientationPortraitUpsideDown</string>
+    <string>UIInterfaceOrientationLandscapeLeft</string>
+    <string>UIInterfaceOrientationLandscapeRight</string>
+  </array>
+
+  <!-- ═══════════════════════════════════════════════════════
+       7. URL Scheme：anyframe://
+       ═══════════════════════════════════════════════════════
+       与桌面安装器（apps/desktop/build/installer.nsh）注册的是同一个
+       scheme，用途是让 Web 版能唤起 App / 桌面端。
+       移动端一般不需要，但保留可以让「网页 → 打开 App」这条路径
+       在五端上行为一致。
+       不需要它的话整段删掉，减少一个可被其他 App 冒用的入口。 -->
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>CFBundleURLName</key>
+      <string>com.anyframe.app</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>anyframe</string>
+      </array>
+    </dict>
+  </array>
+
+  <!-- ═══════════════════════════════════════════════════════
+       8. 硬件权限文案（按需取消注释）
+       ═══════════════════════════════════════════════════════
+       ⚠️ 只要代码里出现对应 API 调用，就必须有文案，否则
+          App 一调到就**直接崩溃**（不是弹权限框，是闪退）。
+       ⚠️ 反过来：代码里没用到的权限不要加文案。审核会问
+          「你为什么需要麦克风」，答不上来会被打回。
+       ⚠️ 蓝牙在 iOS 上只有 BLE（CoreBluetooth）这一条路。
+          有线串口需要 MFi 认证 + External Accessory 框架，
+          普通开发者拿不到，这就是 capabilities.ts 里
+          IOS.device.serial = false 的原因。 -->
+  <!--
+  <key>NSBluetoothAlwaysUsageDescription</key>
+  <string>AnyFrame 需要通过蓝牙连接你的设备以读写数据。</string>
+  <key>NSCameraUsageDescription</key>
+  <string>AnyFrame 需要访问相机以扫描设备二维码。</string>
+  <key>NSPhotoLibraryAddUsageDescription</key>
+  <string>AnyFrame 需要保存导出的图片到相册。</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>用于语音输入。</string>
+  <key>NSFaceIDUsageDescription</key>
+  <string>使用 Face ID 解锁本地服务的访问令牌。</string>
+  -->
+
+</dict>
+</plist>

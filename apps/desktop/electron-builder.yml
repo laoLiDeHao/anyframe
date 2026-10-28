@@ -1,0 +1,247 @@
+# ═══════════════════════════════════════════════════════════════
+#  AnyFrame 桌面端打包配置
+#  目标：Windows（NSIS + Portable） / Ubuntu（deb + rpm + AppImage）
+#
+#  重要约束：electron-builder 不能在 Windows 上产出 Linux 包，
+#  也不能在 Linux 上产出 Windows 包（NSIS 需要 Wine）。
+#  → 必须由 CI 分平台 runner 构建，见 .github/workflows/build.yml
+# ═══════════════════════════════════════════════════════════════
+
+appId: com.anyframe.desktop
+productName: AnyFrame
+copyright: Copyright © 2026 AnyFrame Team
+
+directories:
+  output: release/${version}
+  buildResources: build
+  # 不要写 app: . —— 它本来就是默认值，electron-builder 会额外警告
+  # "Specified application directory equals to project dir — superfluous or wrong configuration"。
+  # 这句警告出现在每次 dist 的开头，很容易被当成真问题去查。
+
+# ── 打包内容 ─────────────────────────────────────────────────
+# 只收编译产物。src/ 与 *.ts 一律不进包。
+files:
+  - dist/**/*
+  - package.json
+  - '!**/*.map'
+  - '!**/*.ts'
+  - '!**/tsconfig.json'
+  # ⚠️ `*.d.ts` 匹配不到 `*.d.cts` / `*.d.mts`。zod、以及本项目
+  #    @anyframe/core 这类「双格式发布」的包，类型声明是 .d.cts 为主。
+  #    少写这两条会让 128 个纯类型文件（实测 391 KB，占 asar 的 10%）进包。
+  #    运行时永远读不到它们 —— Electron 加载的是 .cjs / .js。
+  - '!node_modules/**/{README.md,LICENSE,license,*.d.ts,*.d.cts,*.d.mts,*.map,*.ts}'
+  - '!node_modules/**/{test,tests,docs,example,examples}/**'
+
+asar: true
+asarUnpack:
+  # 需要以真实文件路径访问的内容：
+  #   - *.node 原生模块（dlopen 无法从 asar 内加载）
+  #   - 被 spawn 的外部可执行文件（见 extraResources）
+  - '**/*.node'
+  - resources/**
+
+compression: maximum
+# ⚠️ npmRebuild 依赖 electron-builder 正确识别包管理器。
+#    它的探测顺序是：projectDir/package.json 的 packageManager 字段
+#      → projectDir 下的 lockfile → 环境变量 npm_config_user_agent / npm_execpath。
+#    pnpm workspace 的 lockfile 在**仓库根**而不在 apps/desktop，第二条永远命中不了；
+#    第三条只在「通过 pnpm run 调用」时才成立 —— 直接跑 npx electron-builder 会退化成
+#    npm 语义：既找不到 workspace root（@electron/rebuild 被局限在 app 目录，
+#    即 electron-builder#10187），又会打印一大串 duplicate dependency references。
+#    所以 package.json 里显式写了 packageManager 字段，让第一条就命中。
+npmRebuild: true
+removePackageScripts: false
+
+# ── 随包分发的外部文件 ───────────────────────────────────────
+# build/ 是 buildResources：打包阶段读它，但**不会**进包。
+# 任何运行时要读的文件都必须在这里显式声明，才会被拷到 <安装目录>/resources/。
+extraResources:
+  # 托盘图标。主进程用 process.resourcesPath + 'tray.ico' 定位，
+  # 见 src/main/index.ts 的 createTray()。
+  - from: build/tray.ico
+    to: tray.ico
+  - from: build/tray.png
+    to: tray.png
+  # 「启动本地服务」若需要拉起第三方二进制（Python/Go 服务、ffmpeg 等），
+  # 放到 build/bin/<platform>/ 下，会拷进 resources/bin/。
+  # 代码中用 process.resourcesPath + 'bin/xxx' 定位。
+  # - from: build/bin/${os}/
+  #   to: bin/
+  #   filter: ['**/*']
+
+# ═══════════════════════════════════════════════════════════════
+#  Windows
+# ═══════════════════════════════════════════════════════════════
+win:
+  icon: build/icon.ico
+  # x64 覆盖绝大多数；arm64 供 Surface Pro X / Copilot+ PC
+  target:
+    - target: nsis
+      arch: [x64, arm64]
+    - target: portable
+      arch: [x64]
+  artifactName: ${productName}-${version}-win-${arch}.${ext}
+  #  requestedExecutionLevel: asInvoker  —— 不要请求 admin，
+  #  否则用户每次启动都会看到 UAC 弹窗，且无法开机自启。
+  requestedExecutionLevel: asInvoker
+  signAndEditExecutable: true
+  # 存在 CSC_LINK / CSC_KEY_PASSWORD 时使用传统 pfx 证书签名。
+  # 2026 年 OV/EV 代码签名证书已强制要求私钥存于云 HSM，
+  # 新项目建议直接用下面的 Azure Trusted Signing。
+  # certificateFile / certificatePassword 由环境变量注入，勿写进本文件。
+
+  # ── Azure Trusted Signing（推荐）────────────────────────────
+  # 三个变量都来自 CI secrets；未配置时 electron-builder 会跳过签名。
+  # azureSignOptions:
+  #   publisherName: AnyFrame Team
+  #   endpoint: ${env.AZURE_CODE_SIGNING_ENDPOINT}
+  #   certificateProfileName: ${env.AZURE_CODE_SIGNING_PROFILE}
+  #   codeSigningAccountName: ${env.AZURE_CODE_SIGNING_ACCOUNT}
+
+  # SmartScreen 声誉积累期间会有警告，未签名时更严重。
+  # 正式发布务必签名，否则用户下载后 Chrome/Edge 会拦截。
+
+nsis:
+  oneClick: false                       # 展示向导，允许选目录
+  perMachine: false                     # 装到 %LOCALAPPDATA%，无需管理员权限
+  allowToChangeInstallationDirectory: true
+  allowElevation: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: AnyFrame
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
+  installerSidebar: build/installer-sidebar.bmp
+  uninstallerSidebar: build/installer-sidebar.bmp
+  deleteAppDataOnUninstall: false       # 保留用户数据，重装不丢配置
+  differentialPackage: true             # 增量更新包，配合 electron-updater
+  include: build/installer.nsh
+  artifactName: ${productName}-Setup-${version}-win-${arch}.${ext}
+
+portable:
+  artifactName: ${productName}-${version}-portable-win-${arch}.${ext}
+
+# 可选：企业分发用 MSI（需要 WiX，electron-builder 会自动下载）
+# msi:
+#   oneClick: false
+#   createDesktopShortcut: true
+#   artifactName: ${productName}-${version}-win-${arch}.${ext}
+
+# ═══════════════════════════════════════════════════════════════
+#  Linux（Ubuntu 22.04 / 24.04 LTS）
+# ═══════════════════════════════════════════════════════════════
+linux:
+  icon: build/icons                      # 目录，需含 16/32/48/64/128/256/512x512.png
+  category: Utility
+  synopsis: AnyFrame
+  description: 跨平台本地服务运行时与文件工作区
+  maintainer: AnyFrame Team <dev@anyframe.local>
+  vendor: AnyFrame Team
+  executableName: anyframe               # 小写无空格，Linux 惯例
+  target:
+    - target: deb
+      arch: [x64, arm64]
+    - target: rpm
+      arch: [x64]
+    - target: AppImage
+      arch: [x64, arm64]
+  artifactName: ${productName}-${version}-linux-${arch}.${ext}
+  # ── .desktop 条目 ───────────────────────────────────────────
+  # ⚠️ electron-builder 26 要求这些键值对放在 desktop.entry 之下。
+  #    直接写在 desktop 里会被 schema 拒绝 —— LinuxDesktopFile 只认
+  #    desktopActions / entry 两个键，且 additionalProperties: false。
+  #    症状是整个构建以 "Invalid configuration object" 失败，
+  #    而错误信息只说 "configuration.linux.desktop should be one of these: null"。
+  #
+  # 值一律加引号写成字符串：.desktop 规范里所有值都是字符串，
+  # YAML 的 true / false 会被解析成布尔量，写进文件后某些桌面环境
+  # （尤其是 GNOME 的 desktop-file-validate）会判为非法。
+  #
+  # StartupWMClass 必须与 executableName 一致，
+  # 否则 Ubuntu Dock 上会出现两个图标（固定的 + 运行中的）。
+  desktop:
+    entry:
+      Name: AnyFrame
+      GenericName: Local Service Runtime
+      Comment: Manage local services and files across platforms
+      Categories: Utility;Development;System;
+      StartupWMClass: anyframe
+      StartupNotify: 'true'
+      Terminal: 'false'
+      # 若要注册 anyframe:// 协议（Web 版唤起本地助手就靠它），
+      # 取消下面两行注释，并确认 nsis.include 里也注册了同一协议：
+      # MimeType: 'x-scheme-handler/anyframe;'
+
+  # ── deb 依赖 ────────────────────────────────────────────────
+  # electron-builder 会注入一组默认依赖（libgtk-3-0、libnss3、libxss1 …）。
+  #
+  # ⚠️ 已知坑：Ubuntu 24.04 (Noble) 起 libasound2 更名为 libasound2t64。
+  #    若安装时报 "依赖 libasound2 无法满足"，两种解法：
+  #      1) 在 ubuntu-24.04 runner 上构建（推荐，依赖名匹配 Noble）
+  #      2) 显式覆盖 depends，用 dpkg 的「或」语法同时兼容两个发行版
+  #
+  # depends:
+  #   - libgtk-3-0
+  #   - libnotify4
+  #   - libnss3
+  #   - libxss1
+  #   - libxtst6
+  #   - xdg-utils
+  #   - libatspi2.0-0
+  #   - libuuid1
+  #   - libsecret-1-0
+  #   - 'libasound2 | libasound2t64'
+
+deb:
+  compression: xz
+  # deb 控制文件里的 Priority 字段
+  priority: optional
+  # ⚠️ 是 packageCategory，不是 section。
+  # electron-builder 26 的 DebOptions 里根本没有 section 这个键，
+  # 而它的 schema 是 additionalProperties: false —— 写错不是被忽略，
+  # 是整个 electron-builder 直接 "Invalid configuration object" 退出，
+  # 而且报错信息只说 "configuration.deb should be one of these: null"，
+  # 完全看不出是哪个子键错了。Debian 的 Section 字段对应 packageCategory。
+  packageCategory: utils
+
+rpm:
+  compression: xz
+
+appImage:
+  # ⚠️ 不要写 bundleVendor —— AppImageOptions 没有这个键
+  # （允许的只有 artifactName / category / compression / description /
+  #   desktop / executableArgs / license / mimeTypes / publish / synopsis）。
+  # AppImage 的 vendor 取自上面 linux.vendor，无需在此重复。
+  category: Utility
+  # AppImage 运行时需要 FUSE。Ubuntu 22.04+ 默认未装 libfuse2，
+  # 用户可能遇到 "dlopen(): error loading libfuse.so.2"。
+  # README 中需写明：sudo apt install libfuse2t64（Noble）或 libfuse2（Jammy）
+
+# 可选：Flatpak / Snap 需要额外工具链，CI 里单独出 job
+# snap:
+#   publish:
+#     provider: snapStore
+#   summary: AnyFrame
+#   confinement: strict
+#   grade: stable
+
+# ═══════════════════════════════════════════════════════════════
+#  自动更新（electron-updater）
+# ═══════════════════════════════════════════════════════════════
+# 走 GitHub Releases：打 tag 触发 CI，产物自动上传为 Release 附件，
+# latest.yml（Win）/ latest-linux.yml（Linux）随之生成，客户端据此检查更新。
+publish:
+  - provider: github
+    releaseType: release
+    # owner / repo 留空 → 从 git remote 自动推断，本地与 CI 都适用
+
+generateUpdatesFilesForAllChannels: true
+
+# ── 国内网络加速 ──────────────────────────────────────────────
+# electron / electron-builder 的二进制从 GitHub Releases 下载，
+# CI 或本机超时时改 .npmrc 里的 electron_mirror，或用下面的镜像：
+# electronDownload:
+#   mirror: https://npmmirror.com/mirrors/electron/
+# electronDist: 已下载的 Electron 目录，离线构建时使用

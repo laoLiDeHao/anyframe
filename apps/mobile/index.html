@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <!--
+      viewport-fit=cover  : iPhone 刘海/圆角屏必须，否则安全区外内容被裁掉
+      user-scalable=no    : 双击缩放会让 App 感觉像网页；原生 App 一律关掉
+      maximum-scale=1     : 同上，并避免 iOS 输入框聚焦时的自动放大
+    -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="format-detection" content="telephone=no" />
+    <title>AnyFrame</title>
+
+    <!--
+      ⚠️ 移动端 CSP 与 web/desktop 有三处本质不同，别直接复制：
+
+      1) script-src 必须含 'unsafe-inline'。
+         Capacitor 在运行时把 native-bridge.js 以「内联 <script>」形式注入
+         index.html（WebViewLocalServer 拦截请求后改写 HTML）。
+         严格的 script-src 'self' 会拦掉它 → window.Capacitor 不存在 →
+         所有插件调用静默失败，症状是「原生功能全挂但控制台只有 CSP 报错」。
+         若你使用的 Capacitor 版本改成外链注入，可以去掉 'unsafe-inline'。
+
+      2) connect-src 必须显式放行 http://127.0.0.1:* 与 http://localhost:*。
+         这是整个移动端架构里最反直觉的一点，值得说清楚：
+
+         · 混合内容**不是**障碍。W3C Mixed Content 规范把 loopback
+           （127.0.0.1 / ::1 / localhost）列为 potentially trustworthy origin，
+           Chromium 与 WebKit 都据此放行 https 页面访问 http://127.0.0.1。
+           所以 androidScheme: 'https' 之后仍然能 fetch 本地的明文 HTTP 服务。
+         · 真正的障碍是 iOS 的 **ATS**（App Transport Security），
+           它按自己的规则拦截明文 HTTP，与混合内容无关。
+           解法是 Info.plist 里的 NSAllowsLocalNetworking（只放开本地网络，
+           不是 NSAllowsArbitraryLoads），见 native/ios/Info.plist.patch.xml。
+         · CSP 的 'self' 只覆盖 https://localhost 这一个源，
+           **不包含** http://127.0.0.1。漏写这一条的症状是：原生服务确实起来了、
+           getStatus 也返回 running: true，但 RpcClient 一发请求就在控制台报
+           "Refused to connect ... because it violates the Content Security
+           Policy"，而原生侧日志一行都没有 —— 极难联想到是 CSP。
+
+      3) 需要放行 capacitor: 与 https://localhost。
+         iOS 默认源是 capacitor://localhost，Android 是 https://localhost，
+         _capacitor_file_ / _capacitor_content_ 这些内部 URL 也在这两个源下。
+    -->
+    <!--
+      frame-ancestors 同样被 <meta> 形式的 CSP 忽略（Chromium 会打印一条警告）。
+      移动端不需要它：Capacitor 的 WebView 不加载远端页面，
+      静态资源也无法自定义响应头，写了既无效又误导。
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self' capacitor: https://localhost;
+               script-src 'self' 'unsafe-inline';
+               style-src 'self' 'unsafe-inline';
+               img-src 'self' data: blob: capacitor: https://localhost;
+               media-src 'self' data: blob: capacitor: https://localhost;
+               connect-src 'self' capacitor: https://localhost
+                           http://127.0.0.1:* http://localhost:* http://[::1]:*
+                           ws://localhost:* ws://127.0.0.1:* data: blob:;
+               object-src 'none';
+               base-uri 'self';
+               form-action 'self'"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./src/main.tsx"></script>
+  </body>
+</html>

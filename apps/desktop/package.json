@@ -1,0 +1,56 @@
+{
+  "name": "@anyframe/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.0",
+  "description": "Windows / Ubuntu 桌面端（Electron）",
+  "main": "dist/main/index.cjs",
+  "author": {
+    "name": "AnyFrame Team",
+    "email": "dev@anyframe.local"
+  },
+  "license": "UNLICENSED",
+  "homepage": "https://github.com/your-org/anyframe",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/anyframe.git"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n main,renderer \"pnpm dev:main\" \"pnpm dev:renderer\"",
+    "dev:main": "tsup --watch --onSuccess \"node scripts/restart-electron.mjs\"",
+    "dev:renderer": "vite",
+
+    "build": "pnpm build:main && pnpm build:renderer",
+    "build:main": "tsup",
+    "build:renderer": "vite build",
+
+    "dist": "pnpm build && electron-builder",
+    "dist:win": "pnpm build && electron-builder --win",
+    "dist:linux": "pnpm build && electron-builder --linux",
+    "dist:dir": "pnpm build && electron-builder --dir",
+
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "@anyframe/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "concurrently": "^9.1.0",
+    "electron": "catalog:",
+    "electron-builder": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "rimraf": "^6.0.0",
+    "tsup": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:"
+  }
+}

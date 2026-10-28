@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AnyFrame</title>
+    <meta name="description" content="跨平台本地服务运行时与文件工作区" />
+    <!--
+      Web 端 CSP 不需要 connect-src 通配 127.0.0.1 之外的东西，
+      但必须放行它 —— 这是连接本地 Agent 的唯一通道。
+      托管平台若强制注入自己的 CSP，需确认没有覆盖这一条。
+
+      ⚠️ frame-ancestors 不能写在这里。<meta> 形式的 CSP 会忽略
+      frame-ancestors / report-uri / sandbox 三个指令并打印警告，
+      写了等于没写 —— 而 Web 端恰恰是唯一真的有被 iframe 嵌套风险的形态。
+      防点击劫持必须由托管层下发响应头，二选一（可同时给）：
+        Content-Security-Policy: frame-ancestors 'none'
+        X-Frame-Options: DENY            ← 老浏览器只认这个
+      各平台的落点：Nginx `add_header`、Cloudflare Pages/Netlify `_headers`
+      文件、Vercel `vercel.json` 的 headers 段、GitHub Pages 无法自定义
+      （这也是不建议把 Web 端放 GitHub Pages 的原因之一）。
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self';
+               script-src 'self';
+               style-src 'self' 'unsafe-inline';
+               img-src 'self' data: blob:;
+               connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*;
+               object-src 'none';
+               base-uri 'self'"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,21 @@
+{
+  // 移动端「App 代码」的 TS 配置。
+  //
+  // 只包含 src/，且刻意不给 Node 类型 —— 移动端跑在 WebView 里，
+  // 任何 process / require / fs 都应该在编译期就报错，而不是上线后崩。
+  //
+  // vite.config.ts 与 capacitor.config.ts 属于构建期 Node 环境，
+  // 由 tsconfig.node.json 单独检查；typecheck 脚本会同时跑这两个 project。
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "types": ["vite/client"],
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "paths": {
+      "@anyframe/core": ["../../packages/core/src/index.ts"],
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.d.ts"],
+  "exclude": ["dist", "android", "ios", "node_modules"]
+}

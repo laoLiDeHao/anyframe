@@ -1,0 +1,12 @@
+{
+  // 构建期（Node）配置文件的 TS 检查。
+  // 与 tsconfig.json 分开，是为了让 App 代码里写不出 process.env / require，
+  // 而构建脚本里又能正常使用它们。
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "lib": ["ES2023"]
+  },
+  "include": ["vite.config.ts", "capacitor.config.ts"],
+  "exclude": ["dist", "android", "ios", "node_modules", "src"]
+}

@@ -1,0 +1,74 @@
+name: 'Setup pnpm workspace'
+description: '装好 pnpm + Node 并安装 monorepo 依赖，所有构建 job 共用'
+
+inputs:
+  node-version:
+    description: 'Node 主版本。Capacitor 8 与 Vite 8 都要求 >= 22'
+    required: false
+    default: '22'
+  # 传 1 可跳过下载 Electron 二进制（约 100MB）。
+  # ⚠️ 必须传**空字符串**而不是 '0' 表示「不跳过」：
+  #    electron 的 install.js 判断的是环境变量是否存在且非空，
+  #    '0' 在 JS 里是真值，会意外跳过下载。
+  skip-electron-binary:
+    description: "设为 1 跳过 Electron 二进制下载（只做 typecheck/test 时用）"
+    required: false
+    default: ''
+  frozen:
+    description: '是否要求 lockfile 与 package.json 完全一致（CI 里应为 true）'
+    required: false
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    # ── 顺序很关键 ───────────────────────────────────────────
+    # pnpm/action-setup 必须在 setup-node **之前**。
+    # setup-node 的 cache: pnpm 会调用 `pnpm store path` 来确定缓存目录，
+    # 此时 pnpm 还没装就会报 "Unable to locate executable file: pnpm"，
+    # 而错误信息完全没提示是顺序问题。
+    - name: 安装 pnpm
+      uses: pnpm/action-setup@v4
+      # 版本从根 package.json 的 packageManager 字段读取，不在此处重复声明
+
+    - name: 安装 Node ${{ inputs.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: pnpm
+
+    - name: 校验 lockfile
+      shell: bash
+      run: |
+        if [ ! -f pnpm-lock.yaml ]; then
+          echo "::error file=pnpm-lock.yaml::仓库里没有 pnpm-lock.yaml。"
+          echo "CI 用 --frozen-lockfile 安装，没有 lockfile 无法保证各 runner 装到同一套依赖版本。"
+          echo "请先在本地执行一次 pnpm install，然后把 pnpm-lock.yaml 提交进来。"
+          echo "（.gitignore 里没有忽略它，纯粹是还没生成过。）"
+          exit 1
+        fi
+
+    - name: 安装依赖
+      shell: bash
+      env:
+        ELECTRON_SKIP_BINARY_DOWNLOAD: ${{ inputs.skip-electron-binary }}
+        # 国内 runner 上 Electron / node-gyp 的二进制下载容易超时，
+        # 换成 npmmirror。海外 runner 上这个变量无害（只是多走一次跳转）。
+        ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+        ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
+      run: |
+        set -euo pipefail
+        # 不改 store-dir：actions/setup-node 的 pnpm 缓存就是按默认 store 路径
+        # 建的，挪走会让缓存永久失效，每次构建重新下载几百 MB。
+        if [ "${{ inputs.frozen }}" = "true" ]; then
+          pnpm install --frozen-lockfile
+        else
+          pnpm install
+        fi
+
+    - name: 环境自检（仅报告，不阻断）
+      shell: bash
+      # 不加 --strict：CI runner 上本来就不会同时具备五个端的工具链，
+      # 严格模式会让每个 job 都红。这里只为在日志里留下环境快照，
+      # 出问题时能一眼看出是 runner 缺东西还是代码有问题。
+      run: node scripts/check-env.mjs || true

@@ -1,0 +1,14 @@
+{
+  // 构建期（Node）配置文件的 TS 检查。
+  // vite.config.ts 里用到 process.env.BASE_PATH 与 __dirname，
+  // 这两个都来自 Node，所以单独一个 project 给 node 类型。
+  // （Vite 会用 esbuild 把 config 打包成 CJS/ESM 并注入 __dirname，
+  //   因此在 ESM 包里写 __dirname 是安全的。）
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "lib": ["ES2023"]
+  },
+  "include": ["vite.config.ts"],
+  "exclude": ["dist", "node_modules", "src"]
+}

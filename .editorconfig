@@ -1,0 +1,51 @@
+# ─────────────────────────────────────────────────────────────
+# 统一编辑器行为
+# ─────────────────────────────────────────────────────────────
+# 五个端的工具链来自不同生态（Node / Gradle / CocoaPods / electron-builder），
+# 各自的默认缩进风格并不一致。这里只约定「我们自己写的文件」，
+# 第三方生成的工程（apps/mobile/android、apps/mobile/ios）整体排除，
+# 否则 cap add 之后会产生一大片纯格式化 diff，把真正的改动淹掉。
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+# ── 例外 ────────────────────────────────────────────────────
+
+[*.md]
+# Markdown 里行尾两个空格是「硬换行」语法，不能被 trim 掉
+trim_trailing_whitespace = false
+
+[*.{kt,kts}]
+# Kotlin 官方风格是 4 空格
+indent_size = 4
+
+[*.{gradle,pro}]
+indent_size = 4
+
+[Makefile]
+indent_style = tab
+
+# Swift / Objective-C（未来手写 iOS 原生服务时用）
+[*.{swift,m,h,mm}]
+indent_size = 4
+
+# ── 生成的原生工程不参与格式化 ──────────────────────────────
+# 这两个目录由 cap add 生成、由 scripts/setup-native.mjs 打补丁，
+# 不入库（见 .gitignore），也不该被编辑器的保存时格式化改动。
+[apps/mobile/{android,ios}/**]
+insert_final_newline = unset
+trim_trailing_whitespace = unset
+indent_style = unset
+indent_size = unset
+
+# ── 锁定文件永远不要手改 ────────────────────────────────────
+[pnpm-lock.yaml]
+insert_final_newline = unset
+trim_trailing_whitespace = unset

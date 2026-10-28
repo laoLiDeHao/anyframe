@@ -1,0 +1,164 @@
+// ─────────────────────────────────────────────────────────────
+// android/app/build.gradle 补丁片段
+// ─────────────────────────────────────────────────────────────
+// 由 scripts/setup-native.mjs 合并进 Capacitor 生成的 build.gradle。
+// 单独存一份是为了：
+//   1. 能 review —— diff 里只看得到我们改了什么，不会被模板噪音淹没
+//   2. 能重放 —— 删掉 android/ 重跑 cap add + setup-native 就能还原
+//
+// ⚠️ Capacitor 生成的是 Groovy DSL（build.gradle），不是 Kotlin DSL
+//    （build.gradle.kts）。别照抄网上的 kts 片段。
+
+// ── 1. 读取签名配置：环境变量优先，keystore.properties 兜底 ──
+// CI 里绝不落盘 properties 文件，全部走 secret 注入的环境变量。
+// 本地开发用 keystore.properties（已 gitignore）。
+def afKeystoreProps = new Properties()
+def afKeystoreFile = rootProject.file('keystore.properties')
+if (afKeystoreFile.exists()) {
+    afKeystoreFile.withInputStream { afKeystoreProps.load(it) }
+}
+
+def afStoreFile     = System.getenv('ANYFRAME_ANDROID_STORE_FILE')     ?: afKeystoreProps['storeFile']
+def afStorePassword = System.getenv('ANYFRAME_ANDROID_STORE_PASSWORD') ?: afKeystoreProps['storePassword']
+def afKeyAlias      = System.getenv('ANYFRAME_ANDROID_KEY_ALIAS')      ?: afKeystoreProps['keyAlias']
+def afKeyPassword   = System.getenv('ANYFRAME_ANDROID_KEY_PASSWORD')   ?: afKeystoreProps['keyPassword']
+
+// 四个值齐了才算「可签名」。任何一个缺失就退回 debug 签名，
+// 这样本地开发不配 keystore 也能 assembleRelease 出可安装的包，
+// 而 CI 上缺 secret 会直接失败（下面的 afRequireSigning 开关）。
+def afCanSign = afStoreFile && afStorePassword && afKeyAlias && afKeyPassword
+
+// CI 里设 ANYFRAME_REQUIRE_SIGNING=1，缺签名就报错而不是静默出未签名包。
+// 静默产出未签名的 release 包是最坏的结果：它会一路传到发布环节，
+// 直到用户装不上才发现。
+if (System.getenv('ANYFRAME_REQUIRE_SIGNING') == '1' && !afCanSign) {
+    throw new GradleException(
+        '缺少 Android 发布签名配置。请注入 ANYFRAME_ANDROID_STORE_FILE / ' +
+        '_STORE_PASSWORD / _KEY_ALIAS / _KEY_PASSWORD 四个 secret。')
+}
+
+android {
+    // ── 2. 版本号由 CI 注入 ────────────────────────────────
+    // versionCode 必须单调递增，Google Play 拒绝重复值。
+    // 用「提交数」或「时间戳」自动生成，避免手工改漏。
+    // 本地默认 1，够开发用。
+    def afVersionCode = (System.getenv('ANYFRAME_VERSION_CODE') ?: '1').toInteger()
+    def afVersionName = System.getenv('ANYFRAME_VERSION_NAME') ?: '0.1.0'
+
+    defaultConfig {
+        versionCode afVersionCode
+        versionName afVersionName
+        // minSdk 由 Capacitor 的 variables.gradle 控制（Capacitor 8 = 23）。
+        // 这里不覆盖：改了会和 capacitor-cordova-android-plugins 的
+        // 编译产生冲突，报 "uses-sdk:minSdkVersion X cannot be smaller
+        // than version Y declared in library"。
+    }
+
+    signingConfigs {
+        release {
+            if (afCanSign) {
+                storeFile file(afStoreFile)
+                storePassword afStorePassword
+                keyAlias afKeyAlias
+                keyPassword afKeyPassword
+                // v1 签名对 Android 7.0 以下是必需的；
+                // v2/v3 更快更安全。AGP 默认三个都开，
+                // 但显式写出来可以避免某些 AGP 版本默认值变化。
+                enableV1Signing true
+                enableV2Signing true
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            if (afCanSign) {
+                signingConfig signingConfigs.release
+            }
+
+            // ── 3. R8 压缩 ────────────────────────────────
+            // Capacitor 应用的 JS 在 assets 里，不参与 R8，
+            // 所以开 minify 主要压的是原生层（Capacitor + androidx + 插件）。
+            // 实测能把 DEX 从 ~8MB 降到 ~3MB。
+            //
+            // ⚠️ 必须配套 proguard-rules.pro（见同目录），
+            //    否则 @CapacitorPlugin 注解的类会被改名，
+            //    运行时 registerPlugin 找不到，前端调用永久挂起。
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+        debug {
+            // 开发期关掉压缩，崩溃栈可读，构建也快
+            minifyEnabled false
+            shrinkResources false
+        }
+    }
+
+    // ── 4. ABI 拆分（仅用于 APK 直装分发）────────────────
+    // 好处：armeabi-v7a 用户不用下载 arm64 的 so，包体减半。
+    // ⚠️ bundleRelease（AAB）会**忽略** splits 配置，
+    //    Play 自己做 per-device 分发。所以这段只对 assembleRelease 有效。
+    // ⚠️ 开了 splits 之后 `assembleRelease` 产出多个 APK，
+    //    文件名带 -arm64-v8a / -armeabi-v7a / -universal，
+    //    CI 上传产物时要按这个规则匹配，别写死单个文件名。
+    splits {
+        abi {
+            enable (System.getenv('ANYFRAME_ABI_SPLIT') == '1')
+            reset()
+            // x86_64 只为模拟器；发布产物里可以去掉以减小体积
+            include 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+            universalApk true
+        }
+    }
+
+    bundle {
+        // 语言拆分默认开启，会让 AAB 按设备语言只下发部分资源。
+        // 如果应用支持运行时切换语言，必须关掉，否则切到未下发的语言
+        // 会显示 key 而不是文案。这是个很隐蔽的 bug。
+        language {
+            enableSplit = false
+        }
+        density {
+            enableSplit = true
+        }
+        abi {
+            enableSplit = true
+        }
+    }
+
+    // ── 5. 打包排除项 ────────────────────────────────────
+    packagingOptions {
+        // 第三方 AAR 常带这些，不排除会报 "More than one file was found
+        // with OS independent path 'META-INF/...'" 而构建失败
+        resources {
+            excludes += [
+                'META-INF/DEPENDENCIES',
+                'META-INF/LICENSE',
+                'META-INF/LICENSE.txt',
+                'META-INF/NOTICE',
+                'META-INF/NOTICE.txt',
+                'META-INF/*.kotlin_module',
+            ]
+        }
+    }
+}
+
+// ── 6. 构建前置检查：webDir 必须是 dist ────────────────────
+// Capacitor CLI 8.5.3 的 `cap init` 会忽略传入的 webDir 参数，
+// 永远写 "www"。若 capacitor.config.ts 被误改，这里会立刻报错，
+// 而不是产出一个加载旧内容的空白 App。
+// 详见 apps/mobile/capacitor.config.ts。
+afterEvaluate {
+    def afAssets = file('src/main/assets/public')
+    tasks.matching { it.name == 'preBuild' }.configureEach {
+        doFirst {
+            if (!afAssets.exists() || afAssets.listFiles()?.length == 0) {
+                throw new GradleException(
+                    'android/app/src/main/assets/public 为空。' +
+                    '请先执行 pnpm build && npx cap sync android，' +
+                    '并确认 capacitor.config.ts 里 webDir 是 "dist"。')
+            }
+        }
+    }
+}

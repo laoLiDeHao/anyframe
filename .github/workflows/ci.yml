@@ -1,0 +1,122 @@
+# ═══════════════════════════════════════════════════════════════
+#  CI —— 快速门禁
+# ═══════════════════════════════════════════════════════════════
+#  只做「不需要平台专属工具链」的检查：类型、单测、五端的编译产物。
+#  真正的打包（安装包 / ipa / aab / 签名）在 build.yml 里，
+#  那条流水线要跑十几分钟而且烧 macOS 分钟数，不适合每次 push 都跑。
+#
+#  目标：PR 上 5 分钟内给结论。
+# ═══════════════════════════════════════════════════════════════
+
+name: CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+  workflow_dispatch:
+
+# 同一分支上新的 push 直接取消旧的运行 —— PR 阶段没人关心过期提交的结果。
+# 注意：build.yml 里**不能**这么设，取消发布构建会留下半个 Release。
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # 关掉 Node 的 update notifier 与 npm 的 fund 提示，日志干净很多
+  NO_UPDATE_NOTIFIER: '1'
+  FORCE_COLOR: '1'
+
+jobs:
+  verify:
+    name: 类型 / 测试 / 编译
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 准备 pnpm 工作区
+        uses: ./.github/actions/setup-pnpm
+        with:
+          node-version: '22'
+          # CI 门禁不跑 Electron，跳过那 100MB 的二进制下载
+          skip-electron-binary: '1'
+
+      # ── 类型检查 ──────────────────────────────────────────
+      # pnpm -r 按依赖拓扑序执行，@anyframe/core 一定在各 app 之前。
+      # 这里能过，说明 contract.ts 的 schema 改动没有把某个宿主的
+      # handler 签名改坏 —— RpcHandlerMap 是从方法表推导出来的映射类型，
+      # 契约一变，四个宿主会同时报错，这正是想要的效果。
+      - name: 类型检查
+        run: pnpm typecheck
+
+      - name: 单元测试
+        run: pnpm test
+
+      # ── 编译 ──────────────────────────────────────────────
+      # typecheck 过了不代表打得出来：tsup 的 noExternal、vite 的
+      # 别名解析、Node 内置模块被误打进浏览器 bundle，都只在这一步暴露。
+      - name: 编译全部包
+        run: pnpm build:all
+
+      # ── 产物体积报告 ──────────────────────────────────────
+      # 写进 $GITHUB_STEP_SUMMARY，PR 页面上直接能看到，不用翻日志。
+      # 首屏 JS 体积是 Web 端唯一真正需要长期盯的指标。
+      - name: 产物体积报告
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          {
+            echo "### 构建产物体积"
+            echo
+            echo "| 端 | 产物 | 大小 |"
+            echo "| --- | --- | --- |"
+            report() {
+              local label="$1" dir="$2"
+              if [ -d "$dir" ]; then
+                local size
+                size=$(du -sh "$dir" 2>/dev/null | cut -f1)
+                local count
+                count=$(find "$dir" -type f | wc -l | tr -d ' ')
+                echo "| $label | \`$dir\` | $size（$count 个文件） |"
+              else
+                echo "| $label | \`$dir\` | ⚠️ 未生成 |"
+              fi
+            }
+            report 'Web'       apps/web/dist
+            report '桌面渲染层' apps/desktop/dist/renderer
+            report '桌面主进程' apps/desktop/dist/main
+            report 'Agent'     apps/agent/dist
+            report '移动端'     apps/mobile/dist
+            report 'Core'      packages/core/dist
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Web 首屏超过 500KB（gzip 前）就在日志里报警。
+          # 不用 exit 1 卡住 PR：体积是趋势问题，突然变红反而会让人直接忽略 CI。
+          web_entry=$(find apps/web/dist/assets -name 'main-*.js' -o -name 'index-*.js' 2>/dev/null | head -1)
+          if [ -n "$web_entry" ]; then
+            bytes=$(stat -c%s "$web_entry" 2>/dev/null || stat -f%z "$web_entry")
+            if [ "$bytes" -gt 512000 ]; then
+              echo "::warning file=$web_entry::Web 入口 JS 为 $((bytes / 1024))KB，超过 500KB 预算。检查是否误引入了 node:* polyfill 或未拆分的重型依赖。"
+            fi
+          fi
+
+      - name: 校验 .gitignore 没有漏掉产物
+        shell: bash
+        # 构建完之后 git status 应该是干净的。若不干净，说明有产物没被忽略，
+        # 迟早会被谁不小心 commit 进去（几十 MB 的 ipa 进 git 历史就洗不掉了）。
+        run: |
+          set -uo pipefail
+          dirty=$(git status --porcelain --untracked-files=normal)
+          if [ -n "$dirty" ]; then
+            echo "::warning::构建产生了未被 .gitignore 覆盖的文件："
+            echo "$dirty"
+          else
+            echo "✓ 工作区干净，所有产物都已被忽略"
+          fi

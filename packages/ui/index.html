@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- viewport-fit=cover 是 env(safe-area-inset-*) 生效的前提，
+         缺了它 iOS 刘海屏下样式里的 safe-area 计算恒为 0 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f1115" />
+    <title>AnyFrame</title>
+    <meta name="description" content="跨平台本地服务运行时与文件工作区" />
+    <!--
+      这一份 CSP 要同时服务五种加载方式，所以是各端需求的**并集**：
+        - desktop ：file:// 文档，connect-src 需放行 127.0.0.1:*（RPC 端口运行时分配）
+        - mobile  ：capacitor://localhost（iOS）与 https://localhost（Android）
+        - web     ：https 站点连 127.0.0.1 的本地 Agent
+      多写一个用不到的 scheme 没有副作用，少写一个就是白屏。
+
+      ⚠️ frame-ancestors / report-uri / sandbox 在 <meta> 形式下被规范忽略，
+      写了等于没写。Web 端的防点击劫持必须由托管层下发响应头
+      （Content-Security-Policy: frame-ancestors 'none' 或 X-Frame-Options: DENY），
+      见 apps/web 的部署说明。
+
+      style-src 的 'unsafe-inline' 是必需的：整套样式走 React 的 style 属性，
+      属于 inline style，受 style-src 管辖。
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self' capacitor: https://localhost;
+               script-src 'self';
+               style-src 'self' 'unsafe-inline';
+               img-src 'self' data: blob: capacitor: https://localhost;
+               media-src 'self' data: blob: capacitor: https://localhost;
+               font-src 'self' data:;
+               connect-src 'self' capacitor: https://localhost
+                           http://127.0.0.1:* http://localhost:* http://[::1]:*
+                           ws://127.0.0.1:* ws://localhost:*;
+               object-src 'none';
+               base-uri 'self';
+               form-action 'self'"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./src/main.tsx"></script>
+  </body>
+</html>

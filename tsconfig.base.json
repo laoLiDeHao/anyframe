@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    // 源码里的相对导入统一写成 './x.ts'（带扩展名）。
+    // 好处：Node ESM / tsup / vite 三家解析规则一致，不会出现
+    // 「tsc 过了、运行时 Cannot find module」的经典分裂。
+    // 该选项要求 noEmit 或 emitDeclarationOnly —— 本仓库所有产物
+    // 都由 tsup / vite / electron-builder 生成，tsc 只做类型检查。
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": false,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+
+    // 注意：这里不开 declaration / sourceMap。
+    // noEmit 已生效，且 tsc 在本仓库从不产出文件；
+    // packages/core 的 .d.ts 与 sourcemap 由 tsup 的 dts: true 生成。
+
+    "types": ["node"]
+  },
+  "exclude": ["**/node_modules", "**/dist", "**/release", "**/.output"]
+}

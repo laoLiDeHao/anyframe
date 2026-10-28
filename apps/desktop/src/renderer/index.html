@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      CSP 必须收紧。Electron 安全基线的第一条。
+      connect-src 需要包含 http://127.0.0.1:* —— renderer 要连本地 RPC 服务，
+      端口是运行时动态分配的，所以只能用通配。
+      这是「桌面端也走 HTTP 而非 IPC」这个架构决策的必要代价，
+      通过 token 鉴权 + allowedOrigins 白名单来补偿。
+
+      注意：frame-ancestors / report-uri / sandbox 三个指令在 <meta> 里**无效**，
+      浏览器会忽略并打印一条警告。它们只能通过 HTTP 响应头下发。
+      Electron 这里加载的是 file:// 文档，本身不存在被 iframe 嵌套的风险，
+      所以不需要它们；真要用，得在主进程里挂
+      session.defaultSession.webRequest.onHeadersReceived 注入响应头。
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self';
+               script-src 'self';
+               style-src 'self' 'unsafe-inline';
+               img-src 'self' data: blob:;
+               font-src 'self' data:;
+               connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*;
+               object-src 'none';
+               base-uri 'self';
+               form-action 'self'"
+    />
+    <title>AnyFrame</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>

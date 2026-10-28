@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ─────────────────────────────────────────────────────────────
+  ExportOptions —— App Store Connect 上架
+  ─────────────────────────────────────────────────────────────
+  用法：
+    xcodebuild -exportArchive \
+      -archivePath build/AnyFrame.xcarchive \
+      -exportPath  build/ios \
+      -exportOptionsPlist native/ios/ExportOptions.appstore.plist
+
+  scripts/build-ios.mjs 会自动把下面两个占位符替换成环境变量的值：
+    __TEAM_ID__  ← ANYFRAME_IOS_TEAM_ID
+    __BUNDLE_ID__← ANYFRAME_IOS_BUNDLE_ID（默认 com.anyframe.app）
+  所以这个文件可以直接提交，不含任何机密。
+
+  ── method 名称在 Xcode 15 改过 ────────────────────────────
+  旧名 → 新名：
+    app-store   → app-store-connect
+    ad-hoc      → release-testing
+    development → debugging
+    enterprise  → custom
+  旧名在 Xcode 15/16 上还能用（带 deprecation 警告），
+  但 Capacitor 8 要求 Xcode 26，直接用新名，别照抄老教程。
+
+  ── uploadBitcode 已被移除 ─────────────────────────────────
+  Xcode 14 起 Apple 彻底放弃 bitcode，这个键写了会报
+  "Invalid value for key 'uploadBitcode'"。老项目里抄来的
+  ExportOptions 常带着它，删掉。
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>method</key>
+  <string>app-store-connect</string>
+
+  <!-- 上传到 App Store Connect。改成 export 则只产出 ipa 不上传。
+       CI 里通常先 export 出 ipa 存 artifact，
+       再用 altool / Transporter 单独上传，便于重跑。 -->
+  <key>destination</key>
+  <string>upload</string>
+
+  <key>teamID</key>
+  <string>__TEAM_ID__</string>
+
+  <!-- automatic：由 Xcode 管理证书与描述文件。
+       本地开发省事；CI 上需要配好 keychain 与 API Key 才能自动签。
+       若改用 manual，必须补 provisioningProfiles 字典，
+       键是 bundle id，值是描述文件名称（不是 UUID）。 -->
+  <key>signingStyle</key>
+  <string>automatic</string>
+
+  <key>signingCertificate</key>
+  <string>Apple Distribution</string>
+
+  <!-- 上传 dSYM，Crashlytics / Xcode Organizer 才能符号化崩溃栈。
+       不上传的话线上崩溃全是地址，等于没有。 -->
+  <key>uploadSymbols</key>
+  <true/>
+
+  <!-- 让 Xcode 自动递增 CFBundleVersion（build number）。
+       App Store Connect 要求同一 version 下 build number 唯一，
+       重复会拒绝上传。
+       ⚠️ 但 CI 里更推荐自己算（提交数或时间戳）并写入 Info.plist，
+          这样 artifact 文件名与后台记录能对上。
+          本项目走后者，所以这里设 false。 -->
+  <key>manageAppVersionAndBuildNumber</key>
+  <false/>
+
+  <!-- 首次上传时是否让 App Store Connect 自动生成应用信息。
+       已经建过 App 记录的话设 false，避免覆盖你填好的元数据。 -->
+  <key>generateAppStoreInformation</key>
+  <false/>
+
+  <!-- stripSwiftSymbols 默认 true。
+       若你用 Swift 写了插件且需要崩溃栈还原，保留 true 也没问题，
+       dSYM 里有完整符号。 -->
+  <key>stripSwiftSymbols</key>
+  <true/>
+
+  <!--
+    manual 签名时取消注释。
+    注意 provisioningProfiles 的键是 bundle id，值是**描述文件名称**
+    （在 developer.apple.com 上看到的名字），不是 UUID，也不是文件名。
+    填错会报 "No profiles for 'com.anyframe.app' were found"。
+
+    <key>provisioningProfiles</key>
+    <dict>
+      <key>__BUNDLE_ID__</key>
+      <string>AnyFrame AppStore Profile</string>
+    </dict>
+  -->
+</dict>
+</plist>

@@ -1,0 +1,112 @@
+<!--
+  ─────────────────────────────────────────────────────────────
+  Android Manifest 补丁片段
+  ─────────────────────────────────────────────────────────────
+  这个文件**不是**完整的 AndroidManifest.xml，而是 scripts/setup-native.mjs
+  要往 `npx cap add android` 生成的清单里插入的节点集合。
+
+  为什么不直接提交一份完整的 android/ 目录：
+    Capacitor 每次大版本升级都会重写 android/ 下的模板文件
+    （gradle 版本、AGP 版本、MainActivity、variables.gradle）。
+    手工维护整份清单，升级时必然冲突。
+    所以约定：android/ 与 ios/ 都是**生成物**（已在 .gitignore 里），
+    仓库只保存这份补丁 + 应用它的脚本，可重复、可 review。
+
+  ── 为什么 foregroundServiceType 是 specialUse 而不是 dataSync ──
+  Android 15（API 35）起，dataSync 类型的前台服务有硬性时限：
+  每 24 小时内累计最多 6 小时，超时系统直接杀掉服务并记一条
+  "Foreground service type dataSync timed out" 的 logcat。
+  对一个「常驻本地运行时」来说这等于必然失败。
+  specialUse 没有时限，代价是：
+    1. 必须声明 FOREGROUND_SERVICE_SPECIAL_USE 权限
+    2. 必须用 <property> 写明用途（Google 审核会看）
+    3. 必须在 Play Console → 应用内容 → 前台服务类型 里同步申报
+       只改代码不申报，提交时会被拒。
+-->
+
+<!-- ═══ 以下 <uses-permission> 插入到 <manifest> 直接子级 ═══ -->
+<permissions>
+  <!-- 前台服务基础权限（API 28+） -->
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+
+  <!-- specialUse 类型的专属权限（API 34+）。缺了它 startForeground 直接抛
+       SecurityException / MissingForegroundServiceTypeException，
+       服务在 Android 14+ 上根本起不来。 -->
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+  <!-- Android 13（API 33）起通知是运行时权限。前台服务的通知发不出来，
+       服务就会被系统判定为无效前台服务而终止。必须先申请再 startForeground。 -->
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+  <!-- 内嵌 HTTP 服务只监听 127.0.0.1，但仍属于网络操作。
+       Capacitor 默认已加 INTERNET，这里显式写出以免被模板变更弄丢。 -->
+  <uses-permission android:name="android.permission.INTERNET" />
+  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+  <!--
+    ⚠️ REQUEST_IGNORE_BATTERY_OPTIMIZATIONS 在 Google Play 属于受限权限。
+    政策只允许「核心功能确实需要」的应用使用，滥用会导致下架。
+    如果你的应用要上架 Play：
+      - 要么删掉这一行，改成在 UI 里用文字引导用户自己去系统设置关闭省电
+      - 要么在 Play Console 提交权限声明说明
+    仅内部分发（APK 直装 / 企业 MDM）时可以放心保留。
+  -->
+  <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+  <!-- 硬件（可选）。用户说「硬件调用视情况而定」，所以默认注释掉，
+       需要时取消注释，并且同样要在 Play Console 申报。
+       Android 12（API 31）起蓝牙权限拆成 SCAN / CONNECT / ADVERTISE，
+       且 BLUETOOTH_SCAN 必须带 android:usesPermissionFlags="neverForLocation"
+       否则要额外申请定位权限 —— 这是最容易漏的一条。 -->
+  <!--
+  <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+                   android:usesPermissionFlags="neverForLocation" />
+  <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+  <uses-permission android:name="android.permission.USB_PERMISSION"
+                   tools:ignore="ProtectedPermissions" />
+  -->
+
+  <!-- 任意路径读写。Android 11+ 的「所有文件访问」权限，
+       Play 审核极严（只给文件管理器/备份/杀毒类应用）。
+       默认不开，用 Scoped Storage + SAF 就够绝大多数场景。 -->
+  <!-- <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" /> -->
+</permissions>
+
+<!-- ═══ 以下 <service> 插入到 <application> 内 ═══ -->
+<services>
+  <service
+      android:name="com.anyframe.app.service.LocalHttpService"
+      android:exported="false"
+      android:foregroundServiceType="specialUse"
+      android:stopWithTask="false"
+      tools:targetApi="34">
+    <!--
+      API 34+ 必须提供 specialUse 的子类型说明，
+      否则 install 时抛 INSTALL_FAILED_MISSING_SPECIAL_USE_FGS_SUBTYPE。
+      这段文字会出现在 Play Console 的申报页，用英文写、讲清三点：
+      做什么、用户如何控制、是否有可见通知。
+    -->
+    <property
+        android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+        android:value="Runs a loopback-only (127.0.0.1) local runtime that serves the app's own WebView. The user explicitly starts and stops it from the UI, and a persistent notification reports whether it is running. No user data leaves the device." />
+  </service>
+</services>
+
+<!--
+  ── setup-native.mjs 还会做的两件事 ─────────────────────────
+
+  1. <application android:usesCleartextTraffic>
+     不要设成 true。内嵌服务是 http://127.0.0.1，
+     而 Android 的 networkSecurityConfig 默认就允许回环地址明文流量
+     （cleartextTrafficPermitted 的限制不作用于 localhost）。
+     全局开明文会让所有 http 请求都放行，是实打实的安全倒退。
+     若某些 ROM 上确实被拦，改用 network_security_config.xml 精确放行：
+       <domain-config cleartextTrafficPermitted="true">
+         <domain includeSubdomains="false">127.0.0.1</domain>
+         <domain includeSubdomains="false">localhost</domain>
+       </domain-config>
+
+  2. android:exported
+     MainActivity 由 Capacitor 模板负责（带 intent-filter 的必须 exported=true）。
+     本服务 exported=false：不监听任何跨应用调用，只服务自己的 WebView。
+-->

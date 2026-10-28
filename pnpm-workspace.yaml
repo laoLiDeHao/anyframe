@@ -1,0 +1,99 @@
+packages:
+  - 'packages/*'
+  - 'apps/*'
+
+# ─────────────────────────────────────────────────────────────
+# 版本单一真相源（pnpm catalog）
+# 各 package.json 中用 "catalog:" 引用，禁止在子包里写死版本号。
+# 升级只需改这里，然后 pnpm install。
+# ─────────────────────────────────────────────────────────────
+catalog:
+  # ── 桌面运行时 ────────────────────────────────────────────
+  # Electron 45.0.0 于 2026-10-20 转 stable（Chromium M156 / Node 24.21）。
+  # 此处锁 44.x：已发布 2 个月、补丁到 44.4.5，支持窗口至 2027-03-02。
+  # 注意 Electron 42 已于 2026-10-20 EOL，不要降到 43 以下。
+  electron: ^44.4.5
+
+  # ── 移动端容器 ────────────────────────────────────────────
+  # Capacitor 8 要求：Node >= 22、Xcode 26+、JDK 21、Android Studio Otter
+  '@capacitor/cli': ^8.5.3
+  '@capacitor/core': ^8.5.3
+  '@capacitor/android': ^8.5.3
+  '@capacitor/ios': ^8.5.3
+  '@capacitor/app': ^8.0.0
+  '@capacitor/splash-screen': ^8.0.0
+  '@capacitor/filesystem': ^8.0.0
+  '@capacitor/preferences': ^8.0.0
+  '@capacitor/status-bar': ^8.0.0
+  '@capacitor/network': ^8.0.0
+
+  # ── 构建工具链 ────────────────────────────────────────────
+  vite: ^8.3.4
+  tsup: ^8.5.0
+  # ⚠️ TypeScript 的版本线在 2026 年出现了断层，别照直觉填。
+  #
+  # 现状（已逐个向 registry 核实）：
+  #   latest = 7.0.2（Go 重写的原生编译器）
+  #   5.9 线 = 5.9.2 / 5.9.3（**5.9.0 与 5.9.1 从未发布**）
+  #   没有 6.x 稳定版
+  # 所以 `typescript@5.9.0` 这样的精确 pin 会直接报
+  # "No matching version found"，而 `^5.9.0` 恰好能解析到 5.9.3 —— 差别只在
+  # 有没有写那个 `^`，很容易踩。这里写实际存在的最低下界，避免歧义。
+  #
+  # 停在 5.9.x 而不上 7.0，是因为 7.0 目前卡住两件事：
+  #   1. 编译器改用 Go 重写，**程序化 API 要到 7.1 之后数月才稳定**。
+  #      packages/core 的 tsup 配置开了 dts: true，生成 .d.ts 依赖 TS 的
+  #      编译器 API —— 在 7.0 上这一步会失败，而 core 的类型是四个宿主
+  #      共同的契约来源。typescript-eslint / ts-morph 同理，官方建议等 7.1。
+  #   2. tsconfig 破坏性变更：baseUrl 被移除（paths 必须相对项目根）、
+  #      types 不再自动全量包含、moduleResolution: node/node10 被移除、
+  #      target: es5 与 downlevelIteration 被移除、esModuleInterop 不能为 false。
+  #
+  # 本仓库的 tsconfig 已经按 7.0 的要求写好了（见 tsconfig.base.json）：
+  # 没有 baseUrl，types 显式声明，moduleResolution: bundler，target ES2023。
+  # 所以将来升级只需要改这一行版本号，然后跑 pnpm typecheck 验证。
+  typescript: ^5.9.2
+  electron-builder: ^26.0.0
+  # ⚠️ 版本被 vite 8 反向锁定，不要单独降。
+  # plugin-react 5.x 的 peerDependencies 是 vite ^4.2||^5||^6||^7，
+  # 6.x 起才改成只认 vite ^8.0.0。
+  # .npmrc 里 strict-peer-dependencies=false，装错版本**不会报错**，
+  # 只会在 vite build 时抛出难以理解的内部错误。
+  # 6.x 新增的 oxc-transform-react / @rolldown/plugin-babel /
+  # babel-plugin-react-compiler 都是 optional peer，
+  # auto-install-peers 不会把它们拉进来，可以放心。
+  '@vitejs/plugin-react': ^6.0.0
+
+  # ── UI / 运行时库 ─────────────────────────────────────────
+  react: ^19.2.0
+  react-dom: ^19.2.0
+  zod: ^4.1.0
+
+  # ── 质量工具 ──────────────────────────────────────────────
+  # @types/node 跟着 engines.node 的下限走（>= 22）。
+  # 用 24.x 的类型会让 tsc 放行 Node 22 上并不存在的 API，
+  # 直到用户机器上运行才炸 —— 这类问题的报错信息完全看不出是类型版本。
+  '@types/node': ^22.0.0
+  '@types/react': ^19.2.0
+  '@types/react-dom': ^19.2.0
+  # 同 @vitejs/plugin-react：vitest 4.x 的 peer 是 vite ^6||^7，
+  # 5.x 起才支持 vite ^8。
+  vitest: ^5.0.0
+
+# ─────────────────────────────────────────────────────────────
+# 依赖构建脚本白名单
+# ─────────────────────────────────────────────────────────────
+# pnpm 9 默认放行所有依赖的 postinstall，这个字段会被忽略（留着无害）。
+# pnpm 10 起改为**默认全部拦截**，只有列在这里的包才能执行构建脚本 ——
+# 所以将来升级 pnpm 时不用改任何东西。
+#
+# 为什么这三个必须在名单里：
+#   electron        postinstall 下载 ~100MB 的预编译二进制，
+#                   被拦下来的话 apps/desktop 的 dev/dist 全部失败，
+#                   报错是 "Electron failed to install correctly"。
+#   esbuild         postinstall 落平台专属二进制，tsup / vite 都依赖它。
+#   @capacitor/cli  安装原生模板资源。
+onlyBuiltDependencies:
+  - electron
+  - esbuild
+  - '@capacitor/cli'

@@ -1,0 +1,19 @@
+{
+  // Web 端「App 代码」的 TS 配置。
+  //
+  // types 只给 vite/client，不给 node —— 浏览器里写不出 process / fs，
+  // 编译期就能拦住「本地能跑、部署后白屏」这类错误。
+  // vite.config.ts 属于构建期 Node 环境，交给 tsconfig.node.json。
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "types": ["vite/client"],
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "paths": {
+      "@anyframe/core": ["../../packages/core/src/index.ts"],
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.d.ts"],
+  "exclude": ["dist", "node_modules"]
+}

@@ -1,0 +1,26 @@
+{
+  // Agent 全部代码都跑在 Node 里（没有渲染层），所以只需要一个 project，
+  // 不必像 apps/web、apps/mobile 那样拆出 tsconfig.node.json
+  // —— 那个拆分的目的是「让 App 代码里写不出 process/fs」，这里不适用。
+  //
+  // ⚠️ 不要在这里写 rootDir / outDir：
+  //   include 里有 *.config.ts（tsup.config.ts 在 src/ 之外），
+  //   rootDir: "src" 会立刻报 TS6059「File is not under rootDir」。
+  //   而 tsconfig.base.json 已经开了 noEmit —— 本仓库 tsc 从不产出文件，
+  //   产物由 tsup 生成（outDir 写在 tsup.config.ts 里），
+  //   这两个字段留着只会制造冲突。
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "paths": {
+      // 两条都要写：paths 的精确键不会自动覆盖子路径导入
+      "@anyframe/core": ["../../packages/core/src/index.ts"],
+      "@anyframe/core/node": ["../../packages/core/src/node.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "*.config.ts"],
+  "exclude": ["dist", "release", "node_modules"]
+}
