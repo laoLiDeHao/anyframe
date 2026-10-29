@@ -1,4 +1,5 @@
 import react from '@vitejs/plugin-react'
+import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
 
@@ -24,6 +25,13 @@ const r = (p: string) => fileURLToPath(new URL(p, import.meta.url))
 export default defineConfig({
   base: './',
   plugins: [react()],
+  define: {
+    // 界面要显示版本号，但浏览器读不到 package.json —— 构建期注入一次。
+    // 四个宿主共用同一个变量名，见 src/version.ts。
+    __ANYFRAME_VERSION__: JSON.stringify(
+      JSON.parse(readFileSync(r('../../package.json'), 'utf8')).version,
+    ),
+  },
   resolve: {
     alias: {
       // 直接吃 core 的 TS 源码：改契约后 HMR 立即生效，

@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
@@ -26,12 +27,18 @@ export default defineConfig(() => ({
   resolve: {
     alias: {
       '@anyframe/core': r('../../packages/core/src/index.ts'),
+      // 共享界面直接吃源码，与桌面 / Web 用的是同一份文件
+      '@anyframe/ui': r('../../packages/ui/src/app-entry.ts'),
       '@': r('./src'),
     },
   },
   define: {
     // 与 apps/web 的 vite.config.ts 保持同名，src/ 下的分支判断可复用
     __ANYFRAME_TARGET__: JSON.stringify('capacitor'),
+    // 版本号构建期注入，见 packages/ui/src/version.ts
+    __ANYFRAME_VERSION__: JSON.stringify(
+      JSON.parse(readFileSync(r('../../package.json'), 'utf8')).version,
+    ),
   },
   build: {
     outDir: 'dist',

@@ -1,4 +1,7 @@
 import { defineConfig } from 'tsup'
+import { readFileSync } from 'node:fs'
+
+const version = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version as string
 
 /**
  * Agent 打包为**单文件 CJS**。
@@ -45,7 +48,7 @@ export default defineConfig({
     // CI 的环境变量跑，所以 --help 和 capabilities.get 里的版本只能靠
     // esbuild 的文本替换。本地开发时读不到该环境变量，退回 package.json 的值。
     'process.env.ANYFRAME_AGENT_VERSION': JSON.stringify(
-      process.env.ANYFRAME_AGENT_VERSION ?? '0.1.0',
+      process.env.ANYFRAME_AGENT_VERSION ?? version,
     ),
   },
 })

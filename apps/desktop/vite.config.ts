@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 /**
@@ -28,12 +29,19 @@ export default defineConfig({
   resolve: {
     alias: {
       '@anyframe/core': r('../../packages/core/src/index.ts'),
+      // 共享界面直接吃源码（和 core 一样），改完 packages/ui 立即生效，
+      // 也避免「ui 忘了 build 导致三个端拿到旧界面」这类问题。
+      '@anyframe/ui': r('../../packages/ui/src/app-entry.ts'),
       '@': r('./src/renderer'),
     },
   },
   define: {
     // 让共享 UI 代码能区分宿主，但不要用它替代 capabilities 探测
     __ANYFRAME_TARGET__: JSON.stringify('desktop'),
+    // 版本号在构建期注入：浏览器里读不到 package.json（见 packages/ui/src/version.ts）
+    __ANYFRAME_VERSION__: JSON.stringify(
+      JSON.parse(readFileSync(r('../../package.json'), 'utf8')).version,
+    ),
   },
   build: {
     outDir: r('./dist/renderer'),

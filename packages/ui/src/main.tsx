@@ -1,58 +1,62 @@
-import { StrictMode, useEffect, useState, type CSSProperties } from 'react'
+import { StrictMode, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { bootstrapHost } from './host/index'
-import type { HostSession } from './host/types'
-import { Shell } from './ui/Shell'
+import { AnyFrameApp } from './app/AnyFrameApp.tsx'
+import { bootstrapHost } from './host/index.ts'
+import { HOST_LABEL, type HostSession } from './host/types.ts'
+import { Banner } from './ui/components.tsx'
+import { ensureAppStyles } from './ui/theme.ts'
 
 /**
- * 五端共用 UI 的唯一入口。
+ * packages/ui 自带构建的唯一入口（`pnpm --filter @anyframe/ui build`）。
  *
- * 这里刻意保持极薄：宿主探测的全部复杂度在 src/host/ 里，
- * UI 渲染在 src/ui/Shell.tsx 里，本文件只做「探测 → 渲染」的粘合。
- * 五端加载的都是这一份产物（见 vite.config.ts 顶部注释），
- * 所以任何构建期分叉（import.meta.env 判端、条件 define）都禁止出现在这里。
+ * 三个宿主 app 并不加载这份产物 —— 它们直接吃本包的源码。
+ * 这个入口存在的价值是：能独立跑 `pnpm dev` 调试界面，
+ * 并保证「一份产物服务五端」这条链路随时可验证。
  */
+
+ensureAppStyles()
 
 function App() {
   const [host, setHost] = useState<HostSession | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    bootstrapHost().then(setHost).catch((e: Error) => setError(e.message))
+    bootstrapHost()
+      .then(setHost)
+      .catch((e: Error) => setError(e.message))
   }, [])
 
   if (error) {
     return (
-      <main style={s.page}>
-        <section style={s.warn}>
-          <strong>初始化失败</strong>
-          <p style={s.muted}>{error}</p>
-        </section>
-      </main>
+      <div className="af-root">
+        <main className="af-main">
+          <div className="af-content">
+            <Banner tone="error" title="初始化失败">
+              {error}
+            </Banner>
+          </div>
+        </main>
+      </div>
     )
   }
+
   if (!host) {
     return (
-      <main style={s.page}>
-        <p style={s.muted}>正在探测宿主环境…</p>
-      </main>
+      <div className="af-root">
+        <main className="af-main">
+          <div className="af-content">
+            <p className="af-muted">正在探测宿主环境…</p>
+          </div>
+        </main>
+      </div>
     )
   }
-  return <Shell host={host} />
-}
 
-const s: Record<string, CSSProperties> = {
-  page: {
-    padding: 'calc(env(safe-area-inset-top) + 16px) 16px calc(env(safe-area-inset-bottom) + 24px)',
-    fontFamily: 'system-ui, -apple-system, sans-serif',
-    color: '#e6e6e6',
-    background: '#0f1115',
-    minHeight: '100vh',
-  },
-  warn: { background: '#2a2414', border: '1px solid #5c4f23', borderRadius: 10, padding: 14 },
-  muted: { opacity: 0.65, fontSize: 12, margin: '4px 0 0' },
+  return <AnyFrameApp host={host} hostLabel={HOST_LABEL[host.kind]} />
 }
 
 createRoot(document.getElementById('root')!).render(
-  <StrictMode><App /></StrictMode>,
+  <StrictMode>
+    <App />
+  </StrictMode>,
 )

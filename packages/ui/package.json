@@ -1,6 +1,6 @@
 {
   "name": "@anyframe/ui",
-  "version": "0.1.0",
+  "version": "0.0.2",
   "private": true,
   "type": "module",
   "description": "五端共用的唯一静态 UI（React）。只构建一次，desktop / web / mobile 直接拷贝产物",

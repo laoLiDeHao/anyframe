@@ -61,6 +61,13 @@ anyframe/
 │       ├── contract.ts       ← 所有 RPC 方法的入参出参 schema，单一真相源
 │       ├── capabilities.ts   ← 五端能力表 + can() / reason()
 │       └── runtime/
+├── packages/ui/              **产品界面本身**（React，三端共用同一份源码）
+│   └── src/
+│       ├── model/            项目 / 分组 / 素材的纯数据模型与操作（可单测）
+│       ├── data/             存储（RPC fs ↔ IndexedDB）+ 导入管线 + 缩略图
+│       ├── ui/               响应式界面：侧边栏 / 底部导航 / 网格 / 查看器 / 设置
+│       ├── app/              宿主会话 → 数据 → 页面的组装层
+│       └── host/             五端宿主探测（能力受限时降级）
 ├── apps/desktop/             Electron：main + preload + renderer
 ├── apps/agent/               本地 Agent，Node SEA 打成单文件可执行程序
 ├── apps/web/                 静态站点，靠 Agent 获得完整能力
@@ -81,6 +88,27 @@ anyframe/
 `apps/mobile/android/` 与 `apps/mobile/ios/` **不入库**（见 `.gitignore`）。
 它们由 `cap add` 生成、由 `scripts/setup-native.mjs` 打补丁。
 这样 Capacitor 升级时不会和我们的改动打架，也避免了几万个第三方文件进 git。
+
+---
+
+## 产品界面（v0.0.2）
+
+当前版本 **v0.0.2**。打开应用先是**驾驶舱**：一句话说清「一套代码，五个端」，
+四格真实数据（项目 / 素材 / 分组 / 存储方式），两个主行动 —— 进入项目管理、查看本机能力。
+
+![桌面端首页](docs/images/home-desktop.png)
+
+- **四个一级入口**：首页 / 项目 / 设备 / 设置。桌面走左侧导航，手机走底部 tab，同一组顺序；
+- **设备页**把能力矩阵摆到明面：7 项能力逐条给「可用 / 不可用」与依据，
+  顶部一颗状态灯区分「本地服务已连接 / 未就绪」；
+- 项目页是「分组条 + 素材网格」，拖拽（桌面）或系统媒体选择器（手机）导入，原位保存不转码；
+- 分组是标签而不是文件夹：同一素材可以进多个分组，删分组不会删素材；
+- 没有本地服务时整体退化为 IndexedDB 存储，并在页面顶部说明数据存在哪。
+
+![桌面端设备页](docs/images/device-desktop.png)
+
+功能逻辑、数据模型、交互取舍与后续扩展点见 **[docs/V1-PLAN.md](docs/V1-PLAN.md)**；
+逐版本变更见 **[CHANGELOG.md](CHANGELOG.md)**。
 
 ---
 
@@ -202,9 +230,12 @@ tag 名就是版本号，`meta` job 会把它同时写进 package.json（electro
 | 链路 | 结果 |
 |---|---|
 | `pnpm install` | ✓ 含 postinstall 的 Electron 二进制与原生依赖重建 |
-| `pnpm typecheck` | ✓ 5/5 包通过 |
-| `pnpm test` | ✓ 5/5 包执行（尚无测试文件，`--passWithNoTests`） |
-| `pnpm build:all` | ✓ core + 四个 app 全部编译 |
+| `pnpm typecheck` | ✓ 6/6 包通过 |
+| `pnpm test` | ✓ 33 个单测 + 5 项 DiskStore 端到端（真实 RPC + 临时目录） |
+| `pnpm build:all` | ✓ core + ui + 四个 app 全部编译 |
+| 界面端到端 | ✓ 真实 Electron 渲染进程跑通「新建项目 → 建分组 → 改名 → 刷新后仍在 → 删除项目」（18/18 断言） |
+| 响应式布局 | ✓ 同一份产物在 1280×900 / 820×1000 / 390×844 三种窗口下渲染正确（截图见 docs/images） |
+| 首页 / 设备页（v0.0.2） | ✓ 驾驶舱与能力页在桌面 / 手机两种尺寸下渲染正确，版本号由构建期注入 |
 | `pnpm dist:agent` | ✓ 88.3 MB 单文件 SEA 可执行；`--help` 正常 |
 | Agent RPC 实测 | ✓ capabilities / fs / service / 鉴权 / 路径穿越拦截；base64 二进制往返逐字节一致 |
 | `pnpm dist:win` | ✓ NSIS x64 + arm64 + 双架构合并包 + portable + blockmap + latest.yml |
@@ -243,6 +274,10 @@ pnpm dist:win                # 最后挑一个你当前平台能打的端，验�
 
 ## 下一步（尚未实现）
 
+- **移动端原生 `fs.*`**：`LocalHttpService.kt` 目前只实现 `capabilities.get`，
+  所以 Android / iOS 上的素材暂存在 IndexedDB。补上 `fs.read/write/list/remove`
+  （可直接复用 `apps/mobile/src/native/fs.ts` 的 CapacitorFsProvider 语义）之后，
+  界面无需改动就会自动改用应用私有目录里的真文件。
 - **iOS 原生本地服务**：`native/ios/` 只有配置补丁，没有 Swift 实现。
   需要按 `LocalHttpService.kt` 的同等语义写一个 `NWListener`，
   参考路径见 [apps/mobile/native/README.md](apps/mobile/native/README.md)。
@@ -251,7 +286,8 @@ pnpm dist:win                # 最后挑一个你当前平台能打的端，验�
 - **自动更新**：electron-builder 的 `publish: github` 与 `latest.yml` 已就位，
   但 renderer 里还没接 `electron-updater` —— 目前只有更新元数据在产出，
   客户端并不会去检查。
-- **测试**：五个包都配了 vitest 且带 `--passWithNoTests`，目前一个测试都没有。
-  最该先写的是「契约 → 四个宿主」的集成测试，那份投入能同时覆盖五端。
-  Agent 的端到端冒烟（起进程 → 握手 → fs/service → 优雅退出）也值得固化成
-  CI 步骤，现在 CI 里只做了 `--help` 级别的检查。
+- **测试**：`packages/ui` 已有 33 个单测 + 5 项 DiskStore 端到端；
+  「契约 → 四个宿主」的集成测试、Agent 的端到端冒烟（起进程 → 握手 → fs/service → 优雅退出）
+  仍是空缺，后者值得固化成 CI 步骤。
+- **移动端返回键**：Android 侧尚未接管返回键，项目内按返回会直接退出应用。
+

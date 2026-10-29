@@ -43,7 +43,12 @@ android {
     // 用「提交数」或「时间戳」自动生成，避免手工改漏。
     // 本地默认 1，够开发用。
     def afVersionCode = (System.getenv('ANYFRAME_VERSION_CODE') ?: '1').toInteger()
-    def afVersionName = System.getenv('ANYFRAME_VERSION_NAME') ?: '0.1.0'
+    def afVersionName = System.getenv('ANYFRAME_VERSION_NAME') ?:
+        new groovy.json.JsonSlurper().parse(file('../../package.json')).version
+
+    kotlinOptions {
+        jvmTarget = '21'
+    }
 
     defaultConfig {
         versionCode afVersionCode
@@ -74,6 +79,8 @@ android {
         release {
             if (afCanSign) {
                 signingConfig signingConfigs.release
+            } else {
+                signingConfig signingConfigs.debug
             }
 
             // ── 3. R8 压缩 ────────────────────────────────

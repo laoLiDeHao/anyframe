@@ -114,7 +114,7 @@ class LocalServicePlugin : Plugin() {
             return
         }
 
-        if (permissionState(ALIAS_NOTIFICATIONS) == PermissionState.GRANTED) {
+        if (getPermissionState(ALIAS_NOTIFICATIONS) == PermissionState.GRANTED) {
             call.resolve(JSObject().put("granted", true))
             return
         }
@@ -125,7 +125,7 @@ class LocalServicePlugin : Plugin() {
 
     @PermissionCallback
     private fun onNotificationPermission(call: PluginCall) {
-        val granted = permissionState(ALIAS_NOTIFICATIONS) == PermissionState.GRANTED
+        val granted = getPermissionState(ALIAS_NOTIFICATIONS) == PermissionState.GRANTED
         call.resolve(JSObject().put("granted", granted))
     }
 

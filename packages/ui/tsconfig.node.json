@@ -4,6 +4,6 @@
     "types": ["node"],
     "lib": ["ES2023"]
   },
-  "include": ["vite.config.ts"],
+  "include": ["vite.config.ts", "vitest.config.ts"],
   "exclude": ["dist", "node_modules"]
 }

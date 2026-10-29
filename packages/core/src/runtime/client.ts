@@ -52,6 +52,15 @@ export class RpcClient {
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis)
   }
 
+  /**
+   * 实际使用的服务地址。
+   * 界面「设置」里要显示它 —— 端口是运行时分配的，
+   * 用户排查「连的是不是我以为的那个服务」时只有这一条线索。
+   */
+  get endpoint(): string {
+    return this.baseUrl
+  }
+
   async call<M extends MethodName>(
     method: M,
     input?: MethodInput<M>,

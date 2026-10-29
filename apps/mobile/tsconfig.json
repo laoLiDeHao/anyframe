@@ -13,6 +13,7 @@
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "paths": {
       "@anyframe/core": ["../../packages/core/src/index.ts"],
+      "@anyframe/ui": ["../../packages/ui/src/app-entry.ts"],
       "@/*": ["./src/*"]
     }
   },

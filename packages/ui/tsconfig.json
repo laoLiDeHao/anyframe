@@ -13,5 +13,8 @@
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"],
-  "exclude": ["dist", "node_modules"]
+  // 端到端测试要在 Node 里起真实 RPC 服务，与上面「不给 node 类型」的原则冲突，
+  // 所以把它排除在 tsc 之外，只交给 vitest 执行。
+  // 它验证的是路径约定与落盘行为，不是类型。
+  "exclude": ["dist", "node_modules", "src/**/*.integration.test.ts"]
 }

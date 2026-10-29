@@ -45,8 +45,10 @@ function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 840,
-    minWidth: 960,
-    minHeight: 600,
+    // 最小宽度放到 640：界面在 900px 以下会切成「底部 tab + 手机栅格」，
+    // 用户把窗口拖窄时能看到同一套响应式行为，而不是被系统挡住。
+    minWidth: 640,
+    minHeight: 520,
     show: false,
     backgroundColor: '#0f1115',
     // Linux 下必须与 electron-builder.yml 的 executableName 一致，

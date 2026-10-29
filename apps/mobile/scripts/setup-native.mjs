@@ -223,17 +223,42 @@ function patchAndroidGradle() {
     )
   }
   let src = read(f)
-  if (patched(src)) return log('app/build.gradle 已打过补丁，跳过')
-
   const fragment = read(join(NATIVE, 'android', 'app.build.gradle.fragment'))
+  const marker = `\n// ${MARKER}\n`
+  const previous = src.indexOf(marker)
+  // 该尾部由本脚本生成；重跑时更新它，保证旧工程也能得到签名/编译修复。
+  if (previous >= 0) src = src.slice(0, previous)
 
   // 追加而不是原地改。Gradle 允许 `android { ... }` 出现多次，
   // 配置是累加的 —— 这比用正则去改模板内部结构稳得多，
   // Capacitor 升级重排了 build.gradle 也不会失效。
-  src += `\n// ${MARKER}\n` + fragment + '\n'
+  src += marker + fragment + '\n'
 
   writeFileSync(f, src)
   log('app/build.gradle ✓（签名 / R8 / versionCode 注入 / webDir 校验）')
+}
+
+function patchAndroidKotlin() {
+  const rootFile = join(ANDROID, 'build.gradle')
+  let root = read(rootFile)
+  if (!root.includes('org.jetbrains.kotlin:kotlin-gradle-plugin:')) {
+    const next = root.replace(
+      /(classpath\s+['"]com\.android\.tools\.build:gradle:[^'"]+['"])/,
+      `$1\n        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.1.20'`,
+    )
+    if (next === root) fail('无法在根 build.gradle 中定位 Android Gradle 插件')
+    writeFileSync(rootFile, next)
+  }
+  const appFile = join(ANDROID, 'app', 'build.gradle')
+  let app = read(appFile)
+  if (!app.includes("apply plugin: 'org.jetbrains.kotlin.android'")) {
+    app = app.replace(
+      "apply plugin: 'com.android.application'",
+      "apply plugin: 'com.android.application'\napply plugin: 'org.jetbrains.kotlin.android'",
+    )
+    writeFileSync(appFile, app)
+  }
+  log('Kotlin 编译插件 ✓（JVM 21）')
 }
 
 function patchProguard() {
@@ -251,7 +276,7 @@ function patchProguard() {
  * 复制 Kotlin 源码。
  *
  * 放在 app/src/main/java/ 下而不是 kotlin/ —— 这是 AGP 的默认 sourceSet，
- * Kotlin 文件在 java/ 目录里同样会被编译，不需要额外配置。
+ * 启用 Kotlin 插件后，java/ 下的 Kotlin 文件也会被编译。
  * 反过来若放 kotlin/ 目录，就得在 build.gradle 里加 sourceSets 声明。
  */
 function copyKotlin() {
@@ -408,6 +433,7 @@ function main() {
     copyKotlin()
     patchAndroidManifest()
     patchAndroidGradle()
+    patchAndroidKotlin()
     patchProguard()
     patchMainActivity()
   }
