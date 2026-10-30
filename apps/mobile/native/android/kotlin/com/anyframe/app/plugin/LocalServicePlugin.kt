@@ -19,6 +19,8 @@ import com.getcapacitor.annotation.ActivityCallback
 import com.getcapacitor.annotation.CapacitorPlugin
 import com.getcapacitor.annotation.Permission
 import com.getcapacitor.annotation.PermissionCallback
+import java.io.File
+import org.json.JSONObject
 
 /**
  * ─────────────────────────────────────────────────────────────
@@ -28,7 +30,7 @@ import com.getcapacitor.annotation.PermissionCallback
  * 两边的方法名与返回结构必须逐字一致，否则前端拿到 undefined。
  *
  * 这个插件只负责「把服务拉起来 + 报告状态」，
- * HTTP 协议实现全在 LocalHttpService.kt 里。
+ * HTTP 协议与业务由 APK 内的 Node bundle 提供；Service 在 :node 进程中托管 libnode。
  *
  * ── 注册方式 ───────────────────────────────────────────────
  * 在 MainActivity 里注册（setup-native.mjs 会自动插入）：
@@ -52,6 +54,46 @@ import com.getcapacitor.annotation.PermissionCallback
     ],
 )
 class LocalServicePlugin : Plugin() {
+
+    @PluginMethod
+    fun shareDiagnostics(call: PluginCall) {
+        try {
+            val logs = File(context.cacheDir, "diagnostics").apply { mkdirs() }
+            val report = File(logs, "AnyFrame-node-startup.txt")
+            val text = buildString {
+                appendLine("AnyFrame Node 启动诊断")
+                appendLine("时间：${java.util.Date()}")
+                appendLine("Android：${Build.VERSION.RELEASE} / SDK ${Build.VERSION.SDK_INT}")
+                appendLine("设备：${Build.MANUFACTURER} ${Build.MODEL} / ${Build.SUPPORTED_ABIS.joinToString()}")
+                appendLine("应用：${context.packageManager.getPackageInfo(context.packageName, 0).versionName}")
+                // Do not export node-ready.json: it contains the management token.
+                val status = statusObject()
+                status.remove("token")
+                appendLine("状态：$status")
+                if (Build.VERSION.SDK_INT >= 30) {
+                    val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+                    for (exit in manager.getHistoricalProcessExitReasons(context.packageName, 0, 5)) {
+                        appendLine("进程退出：${exit.processName}, reason=${exit.reason}, status=${exit.status}, time=${exit.timestamp}, ${exit.description}")
+                    }
+                }
+                for (name in listOf("node-stage.txt", "node-error.txt", "node-console.log")) {
+                    appendLine("\n=== $name ===")
+                    val file = File(context.filesDir, name)
+                    appendLine(if (file.exists()) file.readText().takeLast(64000) else "（暂无记录）")
+                }
+            }
+            report.writeText(text)
+            val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", report)
+            val share = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                clipData = android.content.ClipData.newRawUri("启动日志", uri)
+            }
+            activity.startActivity(Intent.createChooser(share, "导出启动日志"))
+            call.resolve()
+        } catch (e: Exception) { call.reject("导出日志失败：${e.message}") }
+    }
 
     @PluginMethod
     fun start(call: PluginCall) {
@@ -80,10 +122,10 @@ class LocalServicePlugin : Plugin() {
         // startForegroundService 是异步的，服务真正监听端口需要几十毫秒。
         // 轮询等待而不是立即返回 —— 前端拿到 running=false 就会走降级 UI，
         // 造成「点一下没反应、再点一下就好了」的诡异体验。
-        val deadline = System.currentTimeMillis() + 5_000
+        val deadline = System.currentTimeMillis() + 15_000
         Thread {
             while (System.currentTimeMillis() < deadline) {
-                if (LocalHttpService.isRunning()) break
+                if (statusObject().getBoolean("running")) break
                 Thread.sleep(50)
             }
             call.resolve(statusObject())
@@ -178,14 +220,30 @@ class LocalServicePlugin : Plugin() {
     }
 
     private fun statusObject(): JSObject {
-        val port = LocalHttpService.boundPort.get()
+        // Processes do not share companion state. Node publishes this file atomically.
+        var stateError = ""
+        val state = try {
+            JSONObject(File(context.filesDir, LocalHttpService.READY_FILE).readText())
+                .also { android.system.Os.kill(it.getInt("pid"), 0) }
+        } catch (e: Exception) { stateError = "${e.javaClass.simpleName}: ${e.message}"; null }
+        val port = state?.optInt("port", 0) ?: 0
         return JSObject().apply {
             put("running", port > 0)
             put("port", if (port > 0) port else JSObject.NULL)
-            put("url", LocalHttpService.url() ?: JSObject.NULL)
+            put("url", state?.optString("url") ?: JSObject.NULL)
+            state?.optString("token")?.let { put("token", it) }
             put("foreground", port > 0)
             put("platform", "android")
-            LocalHttpService.currentReason?.let { put("reason", it) }
+            if (port == 0) {
+                val error = File(context.filesDir, LocalHttpService.ERROR_FILE)
+                if (error.exists()) put("reason", error.readText().take(2000))
+                else put("reason", "Node 服务未启动或已被系统结束")
+                put("reason", optString("reason") + "\n就绪状态检查：" + stateError)
+                val stage = File(context.filesDir, "node-stage.txt")
+                val console = File(context.filesDir, "node-console.log")
+                if (stage.exists()) put("reason", optString("reason") + "\n启动阶段：" + stage.readText())
+                if (console.exists()) put("reason", optString("reason") + "\nNode 输出：" + console.readText().takeLast(4000))
+            }
         }
     }
 

@@ -7,6 +7,7 @@ import { HomePage } from '../ui/pages/HomePage.tsx'
 import { ProjectPage } from '../ui/pages/ProjectPage.tsx'
 import { ProjectsPage } from '../ui/pages/ProjectsPage.tsx'
 import { SettingsPage } from '../ui/pages/SettingsPage.tsx'
+import { ServicesPage } from '../ui/pages/ServicesPage.tsx'
 import { ensureAppStyles } from '../ui/theme.ts'
 import { useLibrary } from './useLibrary.ts'
 
@@ -85,6 +86,7 @@ export function AnyFrameApp({ host, hostLabel, onRequestAgent }: AnyFrameAppProp
     onOpenProjects: openProjects,
     onOpenProject: openProject,
     onOpenDevice: openDevice,
+    onOpenServices: () => setView('services'),
     onOpenSettings: openSettings,
   }
 
@@ -100,7 +102,7 @@ export function AnyFrameApp({ host, hostLabel, onRequestAgent }: AnyFrameAppProp
     )
   }
 
-  if (library.fatal) {
+  if (library.fatal && effectiveView !== 'services') {
     return (
       <AppShell {...frame} title="项目">
         <Banner tone="error" title="读取项目失败">
@@ -116,6 +118,8 @@ export function AnyFrameApp({ host, hostLabel, onRequestAgent }: AnyFrameAppProp
     <>
       {effectiveView === 'home' ? (
         <HomePage frame={frame} host={host} store={library.store} />
+      ) : effectiveView === 'services' ? (
+        <ServicesPage frame={frame} host={host} />
       ) : effectiveView === 'device' ? (
         <DevicePage frame={frame} host={host} store={library.store} />
       ) : effectiveView === 'settings' ? (

@@ -50,6 +50,7 @@ export const CapabilitiesSchema = z.object({
   platform: z.enum(['win32', 'linux', 'darwin', 'android', 'ios', 'web']),
   arch: z.string(),
   version: z.string(),
+  serviceTemplates: z.array(z.literal('express-demo')).optional(),
 
   /**
    * 本地服务能力等级：
@@ -194,6 +195,7 @@ export interface FsProvider {
 // ── 本地服务 ────────────────────────────────────────────────
 
 export const ServiceStartInputSchema = z.object({
+  template: z.literal('express-demo').optional(),
   /** 服务标识，用于日志与去重 */
   name: z.string().min(1).regex(/^[a-z0-9][a-z0-9-_]{0,63}$/, {
     message: 'name 只能包含小写字母、数字、连字符、下划线',
@@ -219,6 +221,7 @@ export const ServiceStartInputSchema = z.object({
 export type ServiceStartInput = z.output<typeof ServiceStartInputSchema>
 
 export const ServiceInfoSchema = z.object({
+  urls: z.array(z.string()).optional(),
   id: z.string(),
   name: z.string(),
   status: z.enum(['starting', 'running', 'stopping', 'stopped', 'crashed']),

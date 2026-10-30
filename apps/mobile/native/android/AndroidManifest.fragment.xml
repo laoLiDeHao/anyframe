@@ -77,6 +77,7 @@
   <service
       android:name="com.anyframe.app.service.LocalHttpService"
       android:exported="false"
+        android:process=":node"
       android:foregroundServiceType="specialUse"
       android:stopWithTask="false"
       tools:targetApi="34">
@@ -88,7 +89,7 @@
     -->
     <property
         android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-        android:value="Runs a loopback-only (127.0.0.1) local runtime that serves the app's own WebView. The user explicitly starts and stops it from the UI, and a persistent notification reports whether it is running. No user data leaves the device." />
+        android:value="User-managed embedded Node runtime with a persistent notification. Management RPC is loopback-only; user-started HTTP and WebSocket services can optionally serve devices on the local network." />
   </service>
 </services>
 

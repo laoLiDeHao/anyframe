@@ -34,6 +34,8 @@ export interface LocalServiceStatus {
   port: number | null
   /** 形如 http://127.0.0.1:47810，未启动时为 null */
   url: string | null
+  /** 每次宿主启动生成，通过原生桥交付，仅用于本机 RPC。 */
+  token?: string
   /**
    * 是否处于「前台服务」状态。
    * Android：有常驻通知即为 true；被厂商 ROM 杀掉后为 false。

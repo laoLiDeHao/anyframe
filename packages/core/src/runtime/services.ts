@@ -16,10 +16,12 @@ export type EmbeddedFactory = (opts: {
   host: string
   port: number
   serviceId: string
+  log: (text: string) => void
 }) => Promise<EmbeddedHandle>
 
 export interface EmbeddedHandle {
   port: number
+  urls?: string[]
   close(): Promise<void>
 }
 
@@ -27,6 +29,7 @@ interface Managed {
   info: ServiceInfo
   child?: ChildProcess
   embedded?: EmbeddedHandle
+  closing?: Promise<void>
   logs: ServiceLogLine[]
   stopping: boolean
   timer?: ReturnType<typeof setTimeout>
@@ -121,9 +124,9 @@ export class ServiceManager {
     // ── 内嵌模式 ────────────────────────────────────────────
     if (factory) {
       try {
-        const handle = await factory({ host, port, serviceId: id })
+        const handle = await factory({ host, port, serviceId: id, log: (text) => push('system', text) })
         managed.embedded = handle
-        managed.info = { ...base, status: 'running', port: handle.port }
+        managed.info = { ...base, status: 'running', port: handle.port, urls: handle.urls }
         push('system', `内嵌服务已启动 ${host}:${handle.port}`)
         return managed.info
       } catch (err) {
@@ -213,11 +216,14 @@ export class ServiceManager {
     if (!m) {
       throw Object.assign(new Error(`服务不存在: ${id}`), { code: 'NOT_FOUND' })
     }
+    if (m.info.status === 'stopped') return m.info
     m.stopping = true
     if (m.timer) clearTimeout(m.timer)
 
     if (m.embedded) {
-      await m.embedded.close()
+      m.info = { ...m.info, status: 'stopping' }
+      m.closing ??= m.embedded.close()
+      await m.closing
       m.info = { ...m.info, status: 'stopped' }
       return m.info
     }

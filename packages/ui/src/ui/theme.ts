@@ -219,7 +219,53 @@ body { color: var(--fg); -webkit-font-smoothing: antialiased; }
   font-size: 16px;
   cursor: pointer;
 }
-.af-icon-btn:hover { background: #1b1f27; color: var(--fg); }
+.af-icon-btn:hover:not(:disabled) { background: #1b1f27; color: var(--fg); }
+.af-icon-btn:disabled { opacity: .35; cursor: not-allowed; }
+
+/* 服务：紧凑列表，配置与分享在弹窗中展开。 */
+.af-service-list { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--panel); }
+.af-service-list-heading { display: flex; justify-content: space-between; padding: 12px 20px; border-bottom: 1px solid var(--line); color: var(--muted-2); font-size: 12px; }
+.af-service-row { display: flex; align-items: center; gap: 16px; padding: 20px; }
+.af-service-row + .af-service-row { border-top: 1px solid var(--line); }
+.af-service-avatar { display: grid; place-items: center; flex-shrink: 0; width: 40px; height: 40px; border: 1px solid var(--line-2); border-radius: 10px; color: #91b5f9; background: var(--panel-2); }
+.af-service-info { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.af-service-info strong { font-size: 14px; font-weight: 550; overflow-wrap: anywhere; }
+.af-service-description { font-size: 12px; color: var(--muted-2); }
+.af-service-status { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; font-size: 12px; color: var(--muted); }
+.af-service-status i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.af-service-status.running { color: var(--ok); }
+.af-service-status.starting, .af-service-status.stopping { color: var(--warn); }
+.af-service-status.crashed, .af-service-error { color: var(--danger); overflow-wrap: anywhere; }
+.af-service-actions { display: flex; align-items: center; gap: 6px; }
+.af-service-enter { gap: 6px; margin-left: 10px; text-decoration: none; }
+.af-service-fields { display: grid; gap: 16px; margin-top: 20px; }
+.af-service-fields > label:first-child { display: grid; gap: 8px; }
+.af-service-switch { display: flex; gap: 8px; align-items: center; }
+.af-service-fields p { margin: -6px 0 0; font-size: 12px; }
+.af-service-details { display: grid; grid-template-columns: auto 1fr; gap: 10px 20px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 12px; }
+.af-service-details > :nth-child(odd) { color: var(--muted-2); }
+.af-service-details code { overflow-wrap: anywhere; }
+.af-service-logs { color: var(--muted); font-size: 12px; }
+.af-service-logs summary { cursor: pointer; }
+.af-service-logs pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 200px; overflow: auto; }
+.af-service-share { display: flex; align-items: center; flex-direction: column; gap: 18px; padding-top: 10px; }
+.af-service-qr { background: #fff; padding: 8px; border-radius: 12px; line-height: 0; }
+.af-service-network { width: 100%; display: grid; gap: 6px; font-size: 12px; color: var(--muted); }
+.af-service-link { display: flex; gap: 8px; width: 100%; }
+.af-service-link input { min-width: 0; font-size: 12px; }
+.af-service-link button { flex-shrink: 0; }
+.af-service-share > [role="status"] { font-size: 12px; text-align: center; }
+.af-service-share-empty { text-align: center; padding: 24px 0 12px; }
+.af-service-share-empty > svg { width: 28px; height: 28px; color: var(--muted-2); }
+@media (max-width: 600px) {
+  .af-service-list-heading { padding: 12px 14px; }
+  .af-service-row { gap: 12px; padding: 16px 14px; flex-wrap: wrap; }
+  .af-service-avatar { width: 34px; height: 34px; }
+  .af-service-info { flex-basis: calc(100% - 50px); }
+  .af-service-actions { margin-left: auto; gap: 8px; }
+  .af-service-status { font-size: 11px; }
+  .af-service-enter { margin-left: 4px; }
+}
 
 /* ── 表单 ───────────────────────────────────────────────── */
 .af-input {

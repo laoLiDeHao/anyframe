@@ -32,6 +32,7 @@ import {
 } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { resolveAndroidSdk } from './android-sdk.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const APP_ROOT = resolve(__dirname, '..')
@@ -57,6 +58,15 @@ if (!existsSync(join(APP_ROOT, 'dist'))) {
 }
 if (!existsSync(join(ANDROID, 'app', 'src', 'main', 'assets', 'public'))) {
   fail('未同步 Web 产物。先执行 npx cap sync android')
+}
+
+// 在启动 Gradle / 下载依赖前检查 SDK；local.properties 与 Gradle 使用同一优先级。
+let androidSdk
+try {
+  androidSdk = resolveAndroidSdk(ANDROID)
+  log(`Android SDK: ${androidSdk} ✓`)
+} catch (error) {
+  fail(error.message)
 }
 
 // JAVA_HOME 检查。Capacitor 8 要求 JDK 21，
@@ -166,6 +176,8 @@ log(`$ gradlew ${tasks.join(' ')}（首次构建需下载 Gradle 与依赖，可
 
 const env = {
   ...process.env,
+  ANDROID_HOME: androidSdk,
+  ANDROID_SDK_ROOT: androidSdk,
   ANYFRAME_VERSION_NAME: versionName,
   ANYFRAME_VERSION_CODE: String(versionCode),
   // Gradle 守护进程在 CI 上反而更慢（每次都要预热 JVM），关掉

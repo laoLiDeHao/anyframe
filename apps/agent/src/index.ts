@@ -11,6 +11,7 @@ import {
   ErrCode,
   NodeFsProvider,
   ServiceManager,
+  startManagedService,
   WEB_WITH_AGENT,
   startRpcServer,
   type Capabilities,
@@ -178,6 +179,7 @@ async function main(): Promise<void> {
     portRangeStart: 47900,
     logger: (level, msg) => console[level](`[agent:service] ${msg}`),
   })
+  capabilities.serviceTemplates = ['express-demo']
 
   // 端口被占用时自动顺延，最多试 4 次。
   // 前端 discoverAgent 会扫 47730~47733，与此保持一致。
@@ -196,7 +198,7 @@ async function main(): Promise<void> {
           'fs.write': (i) => fsProvider.write(i),
           'fs.list': (i) => fsProvider.list(i),
           'fs.remove': (i) => fsProvider.remove(i),
-          'service.start': (i) => manager.start(i),
+          'service.start': (i) => startManagedService(manager, i, args.dataRoot),
           'service.stop': (i) => manager.stop(i.id, i.timeoutMs),
           'service.list': () => ({ services: manager.list() }),
           'service.logs': (i) => ({ lines: manager.logs(i.id, i.tail) }),

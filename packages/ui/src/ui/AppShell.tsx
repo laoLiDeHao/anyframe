@@ -9,12 +9,12 @@ import { Banner } from './components.tsx'
  * 导航结构是「产品形状」的唯一表达，散在各个页面里就一定会长歪 ——
  * 典型表现是设置页在桌面端能返回、在手机上找不到入口。
  *
- * 导航一共四项，桌面与手机是同一组：
- *   首页（驾驶舱） / 项目 / 设备 / 设置
+ * 导航一共五项，桌面与手机是同一组：
+ *   首页 / 项目 / 服务 / 设备 / 设置
  * 桌面端额外把「我的项目」直接列在侧边栏里，省掉一次「先进列表再点进去」。
  */
 
-export type AppView = 'home' | 'projects' | 'project' | 'device' | 'settings'
+export type AppView = 'home' | 'projects' | 'project' | 'services' | 'device' | 'settings'
 
 /** 外框需要的全部导航信息。页面拿到它直接展开成 <AppShell {...frame} /> */
 export interface ShellFrame {
@@ -27,6 +27,7 @@ export interface ShellFrame {
   onOpenProjects: () => void
   onOpenProject: (projectId: string) => void
   onOpenDevice: () => void
+  onOpenServices: () => void
   onOpenSettings: () => void
 }
 
@@ -40,6 +41,7 @@ export interface AppShellProps extends ShellFrame {
 const TABS: { view: AppView; icon: string; label: string }[] = [
   { view: 'home', icon: '⌂', label: '首页' },
   { view: 'projects', icon: '▤', label: '项目' },
+  { view: 'services', icon: '▷', label: '服务' },
   { view: 'device', icon: '◈', label: '设备' },
   { view: 'settings', icon: '⚙', label: '设置' },
 ]
@@ -82,6 +84,9 @@ export function AppShell(props: AppShellProps) {
           <span className="af-nav-text">设备</span>
         </button>
 
+        <button className={view === 'services' ? 'af-nav active' : 'af-nav'} onClick={props.onOpenServices}>
+          <span aria-hidden="true">▷</span><span className="af-nav-text">服务</span>
+        </button>
         <div className="af-side-label">我的项目</div>
         <div className="af-side-list">
           {projects.length === 0 && (
@@ -144,6 +149,7 @@ export function AppShell(props: AppShellProps) {
               if (tab.view === 'home') props.onOpenHome()
               else if (tab.view === 'projects') props.onOpenProjects()
               else if (tab.view === 'device') props.onOpenDevice()
+              else if (tab.view === 'services') props.onOpenServices()
               else props.onOpenSettings()
             }}
           >

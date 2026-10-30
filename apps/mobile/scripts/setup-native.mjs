@@ -173,12 +173,13 @@ const ANDROID_SERVICE = `
         <service
             android:name="com.anyframe.app.service.LocalHttpService"
             android:exported="false"
+            android:process=":node"
             android:foregroundServiceType="specialUse"
             android:stopWithTask="false"
             tools:targetApi="34">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Runs a loopback-only (127.0.0.1) local runtime that serves the app's own WebView. The user explicitly starts and stops it from the UI, and a persistent notification reports whether it is running. No user data leaves the device." />
+                android:value="User-managed embedded Node runtime with a persistent notification. Management RPC is loopback-only; user-started HTTP and WebSocket demo services can optionally serve devices on the local network." />
         </service>
 `
 
@@ -186,7 +187,17 @@ function patchAndroidManifest() {
   const f = join(ANDROID, 'app', 'src', 'main', 'AndroidManifest.xml')
   if (!existsSync(f)) return fail(`找不到 ${f}`)
   let src = read(f)
-  if (patched(src)) return log('AndroidManifest.xml 已打过补丁，跳过')
+  if (!src.includes('android:networkSecurityConfig=')) {
+    src = src.replace('<application', '<application android:networkSecurityConfig="@xml/network_security_config"')
+  }
+  const security = join(ANDROID, 'app/src/main/res/xml/network_security_config.xml')
+  mkdirSync(dirname(security), { recursive: true })
+  cpSync(join(NATIVE, 'android/network_security_config.xml'), security)
+  if (patched(src)) {
+    src = src.replace(/<service\s+android:name="com\.anyframe\.app\.service\.LocalHttpService"[\s\S]*?<\/service>/, ANDROID_SERVICE.slice(ANDROID_SERVICE.indexOf('<service')))
+    writeFileSync(f, src)
+    return log('AndroidManifest.xml ✓（更新独立 Node 进程）')
+  }
 
   // xmlns:tools 是 <property tools:targetApi> 必需的命名空间。
   // Capacitor 模板里不一定带，缺了会报 "unexpected element <property>"。
@@ -280,6 +291,12 @@ function patchProguard() {
  * 反过来若放 kotlin/ 目录，就得在 build.gradle 里加 sourceSets 声明。
  */
 function copyKotlin() {
+  const pathsFile = join(ANDROID, 'app/src/main/res/xml/file_paths.xml')
+  if (existsSync(pathsFile)) {
+    const paths = read(pathsFile)
+    if (!paths.includes('name="node_diagnostics"')) writeFileSync(pathsFile,
+      paths.replace('</paths>', '<cache-path name="node_diagnostics" path="diagnostics/" />\n</paths>'))
+  }
   const srcRoot = join(NATIVE, 'android', 'kotlin')
   if (!existsSync(srcRoot)) return warn('native/android/kotlin 不存在，跳过')
 
@@ -457,6 +474,8 @@ function main() {
     if (doAndroid) cap('sync', 'android')
     if (iosReady) cap('sync', 'ios')
   }
+
+  if (doAndroid) run(process.execPath, [join(__dirname, 'prepare-node.mjs')], { cwd: APP_ROOT })
 
   log('完成。')
   if (doAndroid) log('  下一步：pnpm --filter @anyframe/mobile open:android  （或 run:android 直接上真机）')

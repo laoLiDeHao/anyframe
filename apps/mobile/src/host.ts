@@ -1,6 +1,7 @@
 import { Capacitor } from '@capacitor/core'
 import { ANDROID, IOS, RpcClient, type Capabilities } from '@anyframe/core'
 import { ensureLocalService, mobilePlatform } from './native/local-service.ts'
+import { nativeRpcFetch } from './native/rpc-fetch.ts'
 
 /**
  * ─────────────────────────────────────────────────────────────
@@ -68,11 +69,9 @@ export async function bootstrapMobileHost(): Promise<MobileHost> {
     return { caps, client: null, url: null, foreground: false, warnings }
   }
 
-  // 移动端内嵌服务不启用 token：它只监听 127.0.0.1，
-  // 且同一个 App 沙箱内没有其他进程能连（iOS 完全隔离，
-  // Android 上其他 App 访问本机回环端口需要同一 UID 或 root）。
-  // 若你的 App 允许 WebView 加载远端页面，必须改成带 token。
-  const client = new RpcClient({ baseUrl: status.url, timeoutMs: 15_000 })
+  // Android 的回环端口也能被其他应用访问，因此必须验证原生桥交付的 token。
+  const client = new RpcClient({ baseUrl: status.url, token: status.token, timeoutMs: 15_000,
+    ...(platform === 'android' ? { fetchImpl: nativeRpcFetch } : {}) })
 
   const alive = await client.ping(3000)
   if (!alive) {
@@ -82,7 +81,11 @@ export async function bootstrapMobileHost(): Promise<MobileHost> {
 
   // 以服务端上报的能力为准（原生侧可能因权限被拒而降级），
   // 拿不到就退回静态基线。
-  const remote = await client.capabilities().catch(() => null)
+  const remote = await client.capabilities().catch(error => {
+    warnings.push('Node 能力查询失败：' + String(error?.message ?? error))
+    return null
+  })
+  if (!remote) return { caps, client: null, url: status.url, foreground: status.foreground, warnings }
 
   return {
     caps: remote ?? caps,

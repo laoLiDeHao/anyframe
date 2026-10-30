@@ -38,6 +38,13 @@ if (System.getenv('ANYFRAME_REQUIRE_SIGNING') == '1' && !afCanSign) {
 }
 
 android {
+    ndkVersion '27.1.12297006'
+    externalNativeBuild {
+        cmake {
+            path file('src/main/node/CMakeLists.txt')
+            version '3.22.1'
+        }
+    }
     // ── 2. 版本号由 CI 注入 ────────────────────────────────
     // versionCode 必须单调递增，Google Play 拒绝重复值。
     // 用「提交数」或「时间戳」自动生成，避免手工改漏。
@@ -51,6 +58,10 @@ android {
     }
 
     defaultConfig {
+        if (System.getenv('ANYFRAME_ABI_SPLIT') != '1') {
+            ndk { abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64' }
+        }
+        externalNativeBuild { cmake { arguments '-DANDROID_STL=c++_shared', '-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON' } }
         versionCode afVersionCode
         versionName afVersionName
         // minSdk 由 Capacitor 的 variables.gradle 控制（Capacitor 8 = 23）。
@@ -136,6 +147,7 @@ android {
 
     // ── 5. 打包排除项 ────────────────────────────────────
     packagingOptions {
+        jniLibs { pickFirsts += ['**/libnode.so'] }
         // 第三方 AAR 常带这些，不排除会报 "More than one file was found
         // with OS independent path 'META-INF/...'" 而构建失败
         resources {
@@ -160,6 +172,10 @@ afterEvaluate {
     def afAssets = file('src/main/assets/public')
     tasks.matching { it.name == 'preBuild' }.configureEach {
         doFirst {
+            if (!file('src/main/assets/node-runtime/main.cjs').exists() ||
+                !file('src/main/jniLibs/arm64-v8a/libnode.so').exists()) {
+                throw new GradleException('内嵌 Node 未准备：请执行 pnpm --filter @anyframe/mobile setup:native android')
+            }
             if (!afAssets.exists() || afAssets.listFiles()?.length == 0) {
                 throw new GradleException(
                     'android/app/src/main/assets/public 为空。' +

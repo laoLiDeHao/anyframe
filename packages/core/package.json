@@ -28,7 +28,9 @@
       "require": "./dist/capabilities.cjs"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
@@ -36,10 +38,14 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "express": "catalog:",
+    "ws": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@types/express": "catalog:",
     "@types/node": "catalog:",
+    "@types/ws": "catalog:",
     "tsup": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

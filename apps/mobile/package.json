@@ -9,6 +9,7 @@
     "build": "vite build",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json",
     "test": "vitest run --passWithNoTests",
+    "test:node": "node --test scripts/node-host.smoke.mjs",
 
     "sync": "cap sync",
     "setup:native": "node scripts/setup-native.mjs",
@@ -18,7 +19,7 @@
     "run:android": "cap run android",
     "run:ios": "cap run ios",
 
-    "dist:android": "pnpm build && cap sync android && node scripts/build-android.mjs",
+    "dist:android": "pnpm build && node scripts/setup-native.mjs android && node scripts/build-android.mjs",
     "dist:ios": "pnpm build && cap sync ios && node scripts/build-ios.mjs",
 
     "doctor": "cap doctor"

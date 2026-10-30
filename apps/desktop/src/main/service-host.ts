@@ -6,6 +6,7 @@ import {
   LINUX,
   NodeFsProvider,
   ServiceManager,
+  startManagedService,
   WINDOWS,
   startRpcServer,
   type Capabilities,
@@ -44,6 +45,7 @@ export async function createServiceHost(): Promise<ServiceHost> {
     ...(platform === 'win32' ? WINDOWS : LINUX),
     arch: process.arch,
     version,
+    serviceTemplates: ['express-demo'],
   }
 
   // ── 文件系统 ────────────────────────────────────────────────
@@ -89,7 +91,7 @@ export async function createServiceHost(): Promise<ServiceHost> {
       'fs.list': (input) => fsProvider.list(input),
       'fs.remove': (input) => fsProvider.remove(input),
 
-      'service.start': (input) => manager.start(input),
+      'service.start': (input) => startManagedService(manager, input, dataRoot),
       'service.stop': (input) => manager.stop(input.id, input.timeoutMs),
       'service.list': () => ({ services: manager.list() }),
       'service.logs': (input) => ({ lines: manager.logs(input.id, input.tail) }),

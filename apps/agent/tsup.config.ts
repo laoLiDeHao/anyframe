@@ -21,7 +21,7 @@ export default defineConfig({
   // Agent 实际 import 的是子路径 '@anyframe/core/node'，字符串精确匹配不到，
   // 会被 external 掉，SEA 产物运行时立刻 Cannot find module。
   // 也不用 /.*/ 通配：那会连带尝试打包 node: 内置模块，与下面的 external 冲突。
-  noExternal: [/^@anyframe\//, 'zod'],
+  noExternal: [/.*/],
   // Node 内置模块保持 external（SEA 运行时由宿主 Node 提供）
   external: [
     'node:http', 'node:net', 'node:fs', 'node:fs/promises', 'node:path',
