@@ -52,6 +52,9 @@ jobs:
       # 这里能过，说明 contract.ts 的 schema 改动没有把某个宿主的
       # handler 签名改坏 —— RpcHandlerMap 是从方法表推导出来的映射类型，
       # 契约一变，四个宿主会同时报错，这正是想要的效果。
+      - name: 构建工作区类型依赖
+        run: pnpm build:core
+
       - name: 类型检查
         run: pnpm typecheck
 

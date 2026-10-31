@@ -236,12 +236,13 @@ jobs:
       # data: 前缀的 base64，但超过 Windows 环境变量长度上限（32767 字符）
       # 就会静默截断，然后报一个和证书毫无关系的解析错误。
       - name: 还原代码签名证书
-        if: needs.meta.outputs.has_win_signing == 'true' && secrets.WIN_CSC_LINK_BASE64 != ''
+        if: needs.meta.outputs.has_win_signing == 'true'
         shell: bash
         env:
           CSC_B64: ${{ secrets.WIN_CSC_LINK_BASE64 }}
         run: |
           set -euo pipefail
+          if [[ -z "$CSC_B64" ]]; then exit 0; fi
           printf '%s' "$CSC_B64" | base64 -d > codesign.pfx
           echo "CSC_LINK=$PWD/codesign.pfx" >> "$GITHUB_ENV"
           ls -l codesign.pfx
