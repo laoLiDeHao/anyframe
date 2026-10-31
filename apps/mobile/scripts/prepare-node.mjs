@@ -57,4 +57,5 @@ await build({
 })
 cpSync(join(app, 'native/android/node/LICENSE'), join(main, 'assets/node-runtime/LICENSE'))
 cpSync(join(app, 'node/bootstrap.cjs'), join(main, 'assets/node-runtime/bootstrap.cjs'))
-console.log(`[node] Embedded Node ${version}: SHA256 verified, three ABIs + bundled Express/WS ready`)
+cpSync(join(repo, 'services/builtin'), join(main, 'assets/node-runtime/services'), { recursive: true })
+console.log(`[node] Embedded Node ${version}: SHA256 verified, three ABIs + independent service packages ready`)

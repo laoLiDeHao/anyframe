@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs'
+import { ProjectServiceHost } from '@anyframe/service-host'
 // ⚠️ 这里刻意**不写** `#!/usr/bin/env node`。
 // shebang 由 tsup.config.ts 的 banner 统一注入。源码里再写一遍的话，
 // 产物会变成「第 1 行 shebang + 第 2 行 shebang」—— Node 只剥离第 1 行，
@@ -6,12 +8,11 @@
 import { randomBytes } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { join, dirname, resolve } from 'node:path'
 import {
   ErrCode,
   NodeFsProvider,
   ServiceManager,
-  startManagedService,
   WEB_WITH_AGENT,
   startRpcServer,
   type Capabilities,
@@ -179,7 +180,9 @@ async function main(): Promise<void> {
     portRangeStart: 47900,
     logger: (level, msg) => console[level](`[agent:service] ${msg}`),
   })
-  capabilities.serviceTemplates = ['express-demo']
+  const projects = new ProjectServiceHost(manager, { dataRoot: join(args.dataRoot, '.anyframe'), builtinRoot: process.env.ANYFRAME_BUILTIN_ROOT ?? [join(dirname(resolve(process.argv[1] ?? process.execPath)), 'services'), join(dirname(process.execPath), 'services'), join(process.cwd(), 'services/builtin'), join(process.cwd(), '../../services/builtin')].find(path => existsSync(path)) ?? join(process.cwd(), 'services/builtin') })
+  await projects.initialize()
+  capabilities.serviceTemplates = (await projects.catalog()).packages.map(p => p.id)
 
   // 端口被占用时自动顺延，最多试 4 次。
   // 前端 discoverAgent 会扫 47730~47733，与此保持一致。
@@ -198,9 +201,11 @@ async function main(): Promise<void> {
           'fs.write': (i) => fsProvider.write(i),
           'fs.list': (i) => fsProvider.list(i),
           'fs.remove': (i) => fsProvider.remove(i),
-          'service.start': (i) => startManagedService(manager, i, args.dataRoot),
+          'service.start': (i) => projects.start(i),
           'service.stop': (i) => manager.stop(i.id, i.timeoutMs),
           'service.list': () => ({ services: manager.list() }),
+          'service.catalog': () => projects.catalog(),
+          'service.import': i => projects.importArchive(i.name, i.archive),
           'service.logs': (i) => ({ lines: manager.logs(i.id, i.tail) }),
         },
       })

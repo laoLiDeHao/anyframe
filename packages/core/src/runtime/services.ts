@@ -23,6 +23,8 @@ export interface EmbeddedHandle {
   port: number
   urls?: string[]
   close(): Promise<void>
+  /** Resolves on unexpected runner exit; rejects when the runner crashes. */
+  closed?: Promise<void>
 }
 
 interface Managed {
@@ -127,6 +129,14 @@ export class ServiceManager {
         const handle = await factory({ host, port, serviceId: id, log: (text) => push('system', text) })
         managed.embedded = handle
         managed.info = { ...base, status: 'running', port: handle.port, urls: handle.urls }
+        void handle.closed?.then(() => {
+          if (!managed.stopping) managed.info = { ...managed.info, status: 'stopped' }
+        }, error => {
+          if (!managed.stopping) {
+            managed.info = { ...managed.info, status: 'crashed' }
+            push('system', `服务退出: ${String(error)}`)
+          }
+        })
         push('system', `内嵌服务已启动 ${host}:${handle.port}`)
         return managed.info
       } catch (err) {

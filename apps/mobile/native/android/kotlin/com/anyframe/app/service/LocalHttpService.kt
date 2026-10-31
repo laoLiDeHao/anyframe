@@ -21,6 +21,17 @@ class LocalHttpService : Service() {
     private var started = false
     private external fun runNode(args: Array<String>): Int
 
+    private fun copyAssetTree(source: String, target: File) {
+        val children = assets.list(source) ?: emptyArray()
+        if (children.isEmpty()) {
+            target.parentFile?.mkdirs()
+            assets.open(source).use { input -> target.outputStream().use { input.copyTo(it) } }
+        } else {
+            target.mkdirs()
+            children.forEach { copyAssetTree("$source/$it", File(target, it)) }
+        }
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -51,6 +62,7 @@ class LocalHttpService : Service() {
             try {
                 val runtime = File(filesDir, "node-runtime").apply { mkdirs() }
                 val script = File(runtime, "main.cjs")
+                  copyAssetTree("node-runtime/services", File(runtime, "services"))
                 assets.open("node-runtime/main.cjs").use { input -> script.outputStream().use { input.copyTo(it) } }
                 val bootstrap = File(runtime, "bootstrap.cjs")
                 assets.open("node-runtime/bootstrap.cjs").use { input -> bootstrap.outputStream().use { input.copyTo(it) } }

@@ -63,6 +63,9 @@ catalogs:
     express:
       specifier: ^5.3.0
       version: 5.3.0
+    fflate:
+      specifier: ^0.8.2
+      version: 0.8.3
     qrcode.react:
       specifier: ^4.2.0
       version: 4.2.0
@@ -107,6 +110,9 @@ importers:
       '@anyframe/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@anyframe/service-host':
+        specifier: workspace:*
+        version: link:../../packages/service-host
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -132,6 +138,9 @@ importers:
       '@anyframe/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@anyframe/service-host':
+        specifier: workspace:*
+        version: link:../../packages/service-host
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -181,6 +190,9 @@ importers:
       '@anyframe/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@anyframe/service-host':
+        specifier: workspace:*
+        version: link:../../packages/service-host
       '@capacitor/android':
         specifier: 'catalog:'
         version: 8.5.3(@capacitor/core@8.5.3)
@@ -276,25 +288,35 @@ importers:
 
   packages/core:
     dependencies:
-      express:
-        specifier: 'catalog:'
-        version: 5.3.0
-      ws:
-        specifier: 'catalog:'
-        version: 8.22.0
       zod:
         specifier: 'catalog:'
         version: 4.6.7
     devDependencies:
-      '@types/express':
-        specifier: 'catalog:'
-        version: 5.0.6
       '@types/node':
         specifier: 'catalog:'
         version: 22.20.5
-      '@types/ws':
+      tsup:
         specifier: 'catalog:'
-        version: 8.18.2
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.31)(tsx@4.23.15)(typescript@5.9.3)
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 5.0.5(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
+
+  packages/service-host:
+    dependencies:
+      '@anyframe/core':
+        specifier: workspace:*
+        version: link:../core
+      fflate:
+        specifier: 'catalog:'
+        version: 0.8.3
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.5
       tsup:
         specifier: 'catalog:'
         version: 8.5.1(jiti@2.7.0)(postcss@8.5.31)(tsx@4.23.15)(typescript@5.9.3)
@@ -341,6 +363,43 @@ importers:
       vite:
         specifier: 'catalog:'
         version: 8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)
+      vitest:
+        specifier: 'catalog:'
+        version: 5.0.5(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
+
+  services:
+    dependencies:
+      express:
+        specifier: 'catalog:'
+        version: 5.3.0
+      ws:
+        specifier: 'catalog:'
+        version: 8.22.0
+      zod:
+        specifier: 'catalog:'
+        version: 4.6.7
+    devDependencies:
+      '@anyframe/core':
+        specifier: workspace:*
+        version: link:../packages/core
+      '@anyframe/service-host':
+        specifier: workspace:*
+        version: link:../packages/service-host
+      '@types/express':
+        specifier: 'catalog:'
+        version: 5.0.6
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.5
+      '@types/ws':
+        specifier: 'catalog:'
+        version: 8.18.2
+      tsup:
+        specifier: 'catalog:'
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.31)(tsx@4.23.15)(typescript@5.9.3)
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
       vitest:
         specifier: 'catalog:'
         version: 5.0.5(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
@@ -1652,6 +1711,9 @@ packages:
     peerDependenciesMeta:
       picomatch:
         optional: true
+
+  fflate@0.8.3:
+    resolution: {integrity: sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA==}
 
   filelist@1.0.6:
     resolution: {integrity: sha512-5giy2PkLYY1cP39p17Ech+2xlpTRL9HLspOfEgm0L6CwBXBTgsK5ou0JtzYuepxkaQ/tvhCFIJ5uXo0OrM2DxA==}
@@ -4172,6 +4234,8 @@ snapshots:
   fdir@6.5.0(picomatch@4.0.7):
     optionalDependencies:
       picomatch: 4.0.7
+
+  fflate@0.8.3: {}
 
   filelist@1.0.6:
     dependencies:

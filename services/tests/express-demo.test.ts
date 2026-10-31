@@ -4,17 +4,20 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { WebSocket } from 'ws'
 import { z } from 'zod'
-import { ServiceManager } from './services.ts'
-import { startManagedService } from './express-demo.ts'
-import { ServiceStartInputSchema } from '../contract.ts'
+import { ServiceManager } from '../../packages/core/src/runtime/services.ts'
+import { ProjectServiceHost } from '../../packages/service-host/src/index.ts'
+import { fileURLToPath } from 'node:url'
+import { ServiceStartInputSchema } from '../../packages/core/src/contract.ts'
 
 describe('built-in Express HTTP / WS service', () => {
-  let root: string, manager: ServiceManager, base: string, id: string
+  let root: string, manager: ServiceManager, base: string, id: string, projects: ProjectServiceHost
   const input = ServiceStartInputSchema.parse({ name: 'express-demo', template: 'express-demo' })
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'anyframe-express-'))
     manager = new ServiceManager()
-    const info = await startManagedService(manager, input, root)
+    projects = new ProjectServiceHost(manager, { dataRoot: root, builtinRoot: fileURLToPath(new URL('../builtin', import.meta.url)) })
+    await projects.initialize()
+    const info = await projects.start(input)
     id = info.id; base = info.urls![0]!
   })
   afterEach(async () => { await manager.stopAll(); await rm(root, { recursive: true, force: true }) })
@@ -32,7 +35,7 @@ describe('built-in Express HTTP / WS service', () => {
     await Promise.all(['one', 'two', 'three'].map(text => api('', 'POST', { text })))
     expect((await api()).data).toHaveLength(4)
     await manager.stop(id)
-    const next = await startManagedService(manager, input, root)
+    const next = await projects.start(input)
     base = next.urls![0]!
     expect((await api()).data).toHaveLength(4)
     expect((await api('/' + note.id, 'DELETE')).status).toBe(200)
@@ -64,7 +67,7 @@ describe('built-in Express HTTP / WS service', () => {
     } finally { a.terminate(); b.terminate() }
   })
   it('deduplicates repeated starts and exposes logs only after actual listening', async () => {
-    const [a, b] = await Promise.all([startManagedService(manager, input, root), startManagedService(manager, input, root)])
+    const [a, b] = await Promise.all([projects.start(input), projects.start(input)])
     expect(a.id).toBe(id); expect(b.id).toBe(id)
     expect(manager.list()).toHaveLength(1)
     expect(manager.logs(id, 10).some(l => l.text.includes('Express 示例就绪'))).toBe(true)

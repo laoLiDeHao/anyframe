@@ -57,6 +57,8 @@ removePackageScripts: false
 # build/ 是 buildResources：打包阶段读它，但**不会**进包。
 # 任何运行时要读的文件都必须在这里显式声明，才会被拷到 <安装目录>/resources/。
 extraResources:
+  - from: ../../services/builtin
+    to: services
   # 托盘图标。主进程用 process.resourcesPath + 'tray.ico' 定位，
   # 见 src/main/index.ts 的 createTray()。
   - from: build/tray.ico

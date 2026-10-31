@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtemp, readFile, mkdir, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, mkdir, rm, cp } from 'node:fs/promises'
 import { resolve, join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
@@ -9,7 +9,7 @@ import { once } from 'node:events'
 import { setTimeout as delay } from 'node:timers/promises'
 
 const repo = resolve(fileURLToPath(new URL('../../../', import.meta.url)))
-const require = createRequire(join(repo, 'packages/core/package.json'))
+const require = createRequire(join(repo, 'services/package.json'))
 const { WebSocket } = require('ws')
 const bundle = join(repo, 'apps/mobile/android/app/src/main/assets/node-runtime/bootstrap.cjs')
 
@@ -22,6 +22,7 @@ test('Android Node bundle: authenticated RPC, scoped fs, Express CRUD, WS and re
   const token = 'test-native-bridge-token'
   let rpcUrl
   async function launch() {
+    await cp(join(repo, 'services/builtin'), join(root, 'node-runtime/services'), { recursive: true })
     const ready = join(root, 'node-ready.json')
     await rm(ready, { force: true })
     child = spawn(process.execPath, [bundle, root, ready, token, '0.0.2', '["192.0.2.1"]'], { stdio: ['ignore', 'ignore', 'pipe'] })
@@ -55,7 +56,7 @@ test('Android Node bundle: authenticated RPC, scoped fs, Express CRUD, WS and re
     assert.equal(caps.platform, 'android')
     assert.deepEqual(caps.serviceTemplates, ['express-demo'])
     assert.equal((await rpc('fs.list', { path: '..' })).status, 403)
-    assert.equal((await rpc('service.start', { name: 'external', command: 'node' })).status, 501)
+    assert.equal((await rpc('service.start', { name: 'external', command: 'node' })).status, 404)
     const started = await rpc('service.start', { name: 'express-demo', template: 'express-demo', host: '0.0.0.0' })
     assert.equal(started.body.ok, true, JSON.stringify(started.body))
     const service = started.body.data

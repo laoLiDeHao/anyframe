@@ -1,5 +1,4 @@
-/** Deliberately standalone: no frontend build tools, CDN or framework. */
-export const demoPage = `<!doctype html>
+<!doctype html>
 <html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>AnyFrame · HTTP / WS 测试</title>
 <style>body{font:16px system-ui;max-width:720px;margin:32px auto;padding:0 16px;color:#20242b;background:#f6f7f9}section{background:white;border:1px solid #ddd;border-radius:12px;padding:18px;margin:16px 0}h1{font-size:24px}h2{font-size:19px}input,textarea,button{font:inherit;padding:10px;border:1px solid #bbb;border-radius:6px;box-sizing:border-box}input,textarea{max-width:100%}textarea{width:100%;min-height:72px}button{cursor:pointer}form,.row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}input{flex:1;min-width:100px}li{margin:12px 0;overflow-wrap:anywhere}li p{white-space:pre-wrap}small{color:#596373}#messages{max-height:240px;overflow:auto;padding-left:22px}#status{color:#596373}button:disabled{cursor:default;opacity:.5}</style>
@@ -19,4 +18,4 @@ function connect(){socket=new WebSocket((location.protocol==='https:'?'wss://':'
 $('reconnect').onclick=connect;
 $('chatForm').onsubmit=e=>{e.preventDefault();if(socket.readyState!==WebSocket.OPEN)return;const text=$('message').value.trim();if(!text)return;socket.send(JSON.stringify({name:$('name').value,text}));$('message').value=''};
 load().catch(report);connect();
-</script></html>`
+</script></html>

@@ -12,15 +12,14 @@
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
-
     "dist:sea": "pnpm build && node scripts/build-sea.mjs",
     "dist:portable": "pnpm build && node scripts/build-portable.mjs",
-
     "install:service:win": "node scripts/install-service.mjs --platform=win32",
     "install:service:linux": "node scripts/install-service.mjs --platform=linux"
   },
   "dependencies": {
-    "@anyframe/core": "workspace:*"
+    "@anyframe/core": "workspace:*",
+    "@anyframe/service-host": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",

@@ -38,14 +38,10 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "express": "catalog:",
-    "ws": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {
-    "@types/express": "catalog:",
     "@types/node": "catalog:",
-    "@types/ws": "catalog:",
     "tsup": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

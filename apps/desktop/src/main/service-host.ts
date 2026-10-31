@@ -1,3 +1,4 @@
+import { ProjectServiceHost } from '@anyframe/service-host'
 import { app } from 'electron'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -6,7 +7,6 @@ import {
   LINUX,
   NodeFsProvider,
   ServiceManager,
-  startManagedService,
   WINDOWS,
   startRpcServer,
   type Capabilities,
@@ -45,7 +45,7 @@ export async function createServiceHost(): Promise<ServiceHost> {
     ...(platform === 'win32' ? WINDOWS : LINUX),
     arch: process.arch,
     version,
-    serviceTemplates: ['express-demo'],
+
   }
 
   // ── 文件系统 ────────────────────────────────────────────────
@@ -67,6 +67,10 @@ export async function createServiceHost(): Promise<ServiceHost> {
       console.warn(`[service] ${info.name} 退出 code=${code}`)
     },
   })
+
+  const projects = new ProjectServiceHost(manager, { dataRoot: app.getPath('userData'), builtinRoot: app.isPackaged ? join(process.resourcesPath, 'services') : join(app.getAppPath(), '../../services/builtin') })
+  await projects.initialize()
+  capabilities.serviceTemplates = (await projects.catalog()).packages.map(p => p.id)
 
   // ── RPC 服务端 ─────────────────────────────────────────────
   const handle = await startRpcServer({
@@ -91,9 +95,11 @@ export async function createServiceHost(): Promise<ServiceHost> {
       'fs.list': (input) => fsProvider.list(input),
       'fs.remove': (input) => fsProvider.remove(input),
 
-      'service.start': (input) => startManagedService(manager, input, dataRoot),
+      'service.start': (input) => projects.start(input),
       'service.stop': (input) => manager.stop(input.id, input.timeoutMs),
       'service.list': () => ({ services: manager.list() }),
+      'service.catalog': () => projects.catalog(),
+      'service.import': i => projects.importArchive(i.name, i.archive),
       'service.logs': (input) => ({ lines: manager.logs(input.id, input.tail) }),
     },
   })

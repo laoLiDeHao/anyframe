@@ -1,8 +1,9 @@
+import { ProjectServiceHost } from '@anyframe/service-host'
 import { unlink } from 'node:fs/promises'
 import { writeFileSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
 import { isIP } from 'node:net'
-import { ANDROID, NodeFsProvider, ServiceManager, startManagedService, startRpcServer } from '@anyframe/core/node'
+import { ANDROID, NodeFsProvider, ServiceManager, startRpcServer } from '@anyframe/core/node'
 
 const [root, ready, token, version] = process.argv.slice(2) as [string, string, string, string]
 const stage = (text: string) => writeFileSync(join(root, 'node-stage.txt'), `${new Date().toISOString()} ${text}`)
@@ -11,18 +12,19 @@ const lanAddresses = JSON.parse(process.argv[6] ?? '[]') as string[]
 const files = new NodeFsProvider({ allowedRoots: [root] })
 const manager = new ServiceManager({ portRangeStart: 47820 })
 async function main() {
+  const projects = new ProjectServiceHost(manager, { dataRoot: root, builtinRoot: join(root, 'node-runtime/services'), lanAddresses: lanAddresses.filter(address => isIP(address) === 4) })
+  await projects.initialize()
   stage('开始监听管理 RPC：127.0.0.1 随机端口')
   const rpc = await startRpcServer({
     host: '127.0.0.1', port: 0, token,
     allowedOrigins: ['https://localhost', 'http://localhost'],
     handlers: {
-      'capabilities.get': () => ({ ...ANDROID, arch: process.arch, version, serviceTemplates: ['express-demo'] }),
+      'capabilities.get': async () => ({ ...ANDROID, arch: process.arch, version, serviceTemplates: (await projects.catalog()).packages.map(p => p.id) }),
       'fs.read': i => files.read(i), 'fs.write': i => files.write(i),
       'fs.list': i => files.list(i), 'fs.remove': i => files.remove(i),
-      'service.start': i => {
-        if (i.template !== 'express-demo') throw Object.assign(Error('Android 首版只支持内置 Express 示例'), { code: 'UNSUPPORTED' })
-        return startManagedService(manager, i, root, lanAddresses.filter(address => isIP(address) === 4))
-      },
+      'service.start': i => projects.start(i),
+      'service.catalog': () => projects.catalog(),
+      'service.import': i => projects.importArchive(i.name, i.archive),
       'service.stop': i => manager.stop(i.id, i.timeoutMs),
       'service.list': () => ({ services: manager.list() }),
       'service.logs': i => ({ lines: manager.logs(i.id, i.tail) }),

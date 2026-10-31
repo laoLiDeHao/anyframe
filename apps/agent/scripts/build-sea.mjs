@@ -16,7 +16,7 @@
  *    CI 里对应 build.yml 的 agent-windows / agent-linux 两个 job。
  */
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync, chmodSync, statSync } from 'node:fs'
+import { cpSync, copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync, chmodSync, statSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -49,6 +49,7 @@ function main() {
 
   rmSync(outDir, { recursive: true, force: true })
   mkdirSync(outDir, { recursive: true })
+  cpSync(join(appRoot, '../../services/builtin'), join(outDir, 'services'), { recursive: true })
 
   // ── 1. SEA 配置 ────────────────────────────────────────────
   const seaConfig = join(appRoot, 'sea-config.json')

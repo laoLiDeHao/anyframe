@@ -20,22 +20,20 @@
     "dev": "concurrently -k -n main,renderer \"pnpm dev:main\" \"pnpm dev:renderer\"",
     "dev:main": "tsup --watch --onSuccess \"node scripts/restart-electron.mjs\"",
     "dev:renderer": "vite",
-
     "build": "pnpm build:main && pnpm build:renderer",
     "build:main": "tsup",
     "build:renderer": "vite build",
-
     "dist": "pnpm build && electron-builder",
     "dist:win": "pnpm build && electron-builder --win",
     "dist:linux": "pnpm build && electron-builder --linux",
     "dist:dir": "pnpm build && electron-builder --dir",
-
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
-    "@anyframe/core": "workspace:*"
+    "@anyframe/core": "workspace:*",
+    "@anyframe/service-host": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",

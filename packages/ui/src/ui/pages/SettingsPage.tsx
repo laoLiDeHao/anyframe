@@ -53,10 +53,10 @@ export function SettingsPage({
           <dl className="af-kv">
             <dt>存储方式</dt>
             <dd>
-              {store ? (store.kind === 'disk' ? '磁盘文件（RPC fs）' : '浏览器数据库（降级）') : '尚未就绪'}
+              {host.client ? '宿主私有服务目录' : '未连接运行宿主'}
             </dd>
             <dt>位置</dt>
-            <dd>{store?.location ?? '—'}</dd>
+            <dd>services/&lt;服务 ID&gt;/</dd>
             <dt>宿主</dt>
             <dd>
               {HOST_LABEL[host.kind]}（{host.kind}）· {host.caps.platform}/{host.caps.arch}
@@ -65,9 +65,7 @@ export function SettingsPage({
             <dd>{host.url ?? '未连接'}</dd>
           </dl>
           <p className="af-muted-2" style={{ marginBottom: 0 }}>
-            {store?.kind === 'disk'
-              ? '桌面端与本地助手会把素材写进数据目录下的 AnyFrame/，重启、换浏览器都还在。'
-              : '降级模式下素材存在当前浏览器 / WebView 里：同一台设备刷新还在，换设备或清缓存就没了。'}
+            每个服务的入口、前端与业务数据保存在各自目录中；端口和访问设置在服务列表里编辑。
           </p>
         </div>
       </section>
@@ -92,11 +90,10 @@ export function SettingsPage({
         <h2 className="af-section-title">关于这一版</h2>
         <div className="af-card">
           <p style={{ margin: '0 0 8px' }}>
-            v{resolveVersion(host.caps.version)}：首页驾驶舱、项目 / 分组 / 素材工作台、设备能力页。
-            素材按原文件保存，分组是标签，删除分组不会删素材。
+            v{resolveVersion(host.caps.version)}：独立服务包管理、运行配置和局域网分享。
           </p>
           <p className="af-muted-2" style={{ marginBottom: 0 }}>
-            跨端同步、素材编辑、分享导出都还没有；规划见仓库里的 docs/V1-PLAN.md。
+            导入预先打包的 ZIP 服务，在当前设备上运行。
           </p>
         </div>
       </section>

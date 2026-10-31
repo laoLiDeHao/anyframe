@@ -1,174 +1,140 @@
-# AnyFrame 内嵌 Node 服务与局域网发布规划
+# AnyFrame 服务宿主开发规范
 
-决策：统一使用随软件分发的 Node 运行时；取消 QuickJS 和自定义 JS 运行时方案。
-目标：维护一份 Node/TypeScript 后端业务代码，各平台只适配运行与生命周期。
-当前已接入：服务管理页、共用 Express 记事本/聊天室、桌面 Electron Node、Android libnode/JNI/独立前台进程。
-Android 已构建 release；真机后台与局域网验证待连接设备后执行。首版仅支持内置模板，服务包导入和媒体挂载仍属后续规划。iOS 不在范围内。
+本文件是后续服务开发、导入、运行和分发的约定。当前产品入口为「首页 / 服务 / 设备 / 设置」；移除原素材项目 Tab、侧栏项目列表和首页素材项目入口。旧素材代码与既有数据保留，不再挂载到主界面。
 
-## 1. 各端运行方式
+## 1. 包职责与目录
 
-| 平台 | 运行方案 | 业务代码 |
+```text
+services/
+  builtin/                      # 随软件分发的默认服务；加载器自动扫描一级子目录
+    express-demo/
+      index.js                  # 已打包的 CommonJS JS 入口
+      wwwroot/
+        index.html              # 前端生产文件，可附带 assets 等子目录
+  src/                          # 本仓库维护的示例源码，不进入运行时加载路径
+    express-demo/index.ts
+  build.mjs                     # 示例源码 → builtin/express-demo/index.js
+packages/
+  core/                         # RPC 契约、能力声明、通用 ServiceManager；不含服务业务
+  service-host/                 # 包发现、安装、导入校验、权限 Runner、生命周期桥接
+apps/
+  desktop/                      # Electron 生命周期与资源路径
+  agent/                        # 本地助手的配置与进程生命周期
+  mobile/                       # Android libnode / JNI / 前台服务与资源复制
+```
+
+新增系统默认项目：直接将打包好的文件夹放进 `services/builtin/<id>/`。不修改 core、平台 handler 或 UI 中的服务名称分支。自有服务的源码和依赖归服务自己的构建工程管理，不能放进 core 或依赖管理器里等待设备安装。
+
+服务 ID 为 1–64 位小写字母、数字、连字符、下划线，首位必须是字母或数字。文件夹名就是服务 ID。当前显示名与 ID 一致；将来若增加展示元数据，必须走通用包契约，不添加业务硬编码。
+
+## 2. 最小服务包格式
+
+```text
+my-service/
+  index.js                      # 必需：CommonJS，导出 start(context)
+  wwwroot/
+    index.html                  # 必需：前端入口
+    assets/                     # 可选：JS/CSS/图片等
+  ...                           # 打包器生成的项目内辅助 JS/资源
+```
+
+约定使用 `index.js`，输出格式为 CommonJS。不要带 `package.json` 的 `type: module`，不要依赖宿主的 node_modules、TypeScript loader、npm install、全局模块或 CDN。Express、ws 等非 Node 内置依赖由作者预先打包进 JS；静态资源需随包交付。设备不执行构建或安装脚本。
+
+使用 Node 标准模块开发后端，HTTP 框架由项目自行选择。`wwwroot` 是项目自己的前端目录，不是 AnyFrame 管理界面的目录。项目自行提供静态文件路由；不能挂载项目根目录，因为其中有后端代码与运行数据。
+
+原生 `.node` 模块、子进程、额外 Worker、WASI 和调试器不在当前服务包能力范围内。兼容的纯 JS 依赖可以在开发机用 esbuild、Rollup 等工具 bundle；不能把电脑 node_modules 原样复制后宣称 Android 兼容。
+
+## 3. 启动与停止契约
+
+```js
+// index.js：作者打包后的 CommonJS 入口
+exports.start = async ({ host, port, projectDir, publicDir, log }) => {
+  // projectDir：本服务安装及运行目录
+  // publicDir：projectDir/wwwroot
+  // host：127.0.0.1 或 0.0.0.0；port：宿主分配的端口
+  // 此处创建 HTTP/WS 服务，等待 listen 成功后再返回
+  log('服务就绪')
+  return {
+    port,
+    async close() {
+      // 关闭 HTTP、WebSocket、数据库、连接与定时器，等待写入结束
+    },
+  }
+}
+```
+
+只约定一个 `start(context)` 导出；它返回 `{ port, close() }`。不要在顶层自动 listen。必须使用分配的 host/port，不能静默换端口。启动超时为 15 秒；停止最多等待 5 秒，超时终止该服务线程。
+
+服务不得调用 process.chdir 或修改宿主全局环境。配置通过 context 传递，不能要求管理宿主为每个服务修改 process.env。不要调用 process.exit 控制整个宿主；服务只负责自己的生命周期。
+
+ServiceManager 管理运行状态、日志和每次运行的 ID。ProjectServiceHost 按稳定包 ID 发现项目，并对并发重复启动去重。停止后前端不再提供可点击的访问链接；运行器意外退出必须回报 stopped/crashed，不能继续显示 running。
+
+## 4. 目录权限边界
+
+每个项目在宿主私有数据目录的 `services/<id>/` 中拥有自己的目录，入口、wwwroot、业务数据都留在该目录。业务可使用 `projectDir/data/` 保存新数据；现有示例继续在自己的项目根目录保存 notes.json，兼容已有结构。宿主拥有安装元数据 `service.json`，项目不得依赖或修改它。
+
+Runner 为每个服务创建独立 Node Worker，显式使用：
+
+```text
+--permission
+--allow-fs-read=<当前项目真实路径>
+--allow-fs-write=<当前项目真实路径>
+```
+
+不继承管理进程的 execArgv 和环境变量。未开放子进程、额外 Worker、原生 addon、WASI 等权限。服务目录递归拒绝符号链接与原生模块，启动前再次检查目录；不能把其他服务目录、用户主目录或管理器目录加入权限白名单。拒绝越界读写必须由测试验证，不以 cwd 或约定代替权限限制。
+
+宿主不支持这些权限参数时必须启动失败，不可回退到管理进程内直接 import。不允许以 vm、自定义 require 白名单或 NodeFsProvider 的管理 RPC 路径限制冒充业务运行权限隔离。
+
+边界说明：Node Permission Model 用于约束正常服务的资源访问，不是对恶意 JS 的完整操作系统安全沙箱。Worker 共享进程，原生崩溃仍可能影响整个 Node 宿主。开放不可信代码市场之前，需独立设计操作系统沙箱、网络/资源配额和平台威胁模型；不得宣称当前实现能安全运行任意恶意包。参考 [Node Permission Model](https://github.com/nodejs/node/blob/main/doc/api/permissions.md)。
+
+## 5. 用户 ZIP 导入
+
+服务页「导入服务」选择 ZIP，输入稳定服务 ID。支持 ZIP 根部直接有 index.js/wwwroot，或只有一层外包项目文件夹。导入只安装，不自动运行；安装后出现在服务列表，再编辑和运行。
+
+管理 RPC：
+
+- `service.catalog` 返回已安装包的 ID、名称和 builtin/user 来源。
+- `service.import` 接收服务名称与 ZIP base64，完成校验、暂存、发布。
+- `service.start` 以 template/name 指定已安装包，不接收用户提供的任意服务器路径。
+- `service.list/stop/logs` 继续复用通用契约。
+
+导入边界：压缩包最大 20 MB，展开总量最大 64 MB、单文件最大 16 MB、最多 2000 个条目。拒绝绝对路径、`..`、反斜线、Windows 盘符/ADS、设备保留名等不安全路径。解压内容写成普通文件，不恢复 ZIP 链接；安装树递归检查符号链接。禁止上传宿主 service.json 和 data/ 运行数据，不允许覆盖同名包。
+
+在目标服务目录同级创建随机暂存目录，全部校验通过后 rename 发布；失败清理暂存目录。任何失败都不能执行上传代码。后续若支持更新、删除与回滚，须另立带版本和事务的契约，不能绕过当前禁止覆盖的规则。
+
+Android 的文件选择与读取经 WebView / 系统选择器完成，ZIP 数据通过已鉴权的管理 RPC 交给 Node；不把 content:// 当作文件系统路径。
+
+## 6. 各端分发
+
+| 平台 | 默认包资源 | 执行方式 |
 | --- | --- | --- |
-| Windows / Linux | 当前示例使用 Electron 自带 Node；后续可扩展独立进程 | 共用 Node 业务包 |
-| Android | Capacitor 插件 → 原生前台服务 → JNI → libnode.so | 共用 Node 业务包 |
-| Web | 连接本机 Agent 或已配对远程宿主 | 由所选设备执行 |
+| Desktop 开发 | 仓库 services/builtin | Electron Node → 每服务受限 Worker |
+| Desktop 安装包 | resources/services | 同上，复制到应用 userData/services 后执行 |
+| Agent | 分发目录 services；开发可指定 ANYFRAME_BUILTIN_ROOT | Node / SEA → 每服务受限 Worker |
+| Android | assets/node-runtime/services | Kotlin 复制到私有目录；libnode 中创建受限 Worker |
+| Web | 不执行 Node | 连接当前宿主的管理 RPC |
 
-“内嵌”指运行时随产品分发，不要求用户另装 Node；桌面无需把业务直接放进 Electron 主进程。
-独立 Agent 也携带对应运行时；现有 SEA 助手 EXE 不默认当作通用 node.exe 使用。
-浏览器不能自行监听局域网端口，必须显示实际运行设备。
+默认包随资源目录分发，不内联到主程序 bundle。桌面 electron-builder、Agent portable/SEA 发布脚本、Android prepare-node 必须带上这些资源。默认服务更新只更新包内代码/前端文件，不删除项目运行数据；遇到同 ID 用户包冲突必须报错。
 
-## 2. Android 依赖选择与验证门槛
+Android 继续一个 :node 前台服务进程、一次 JNI Node 初始化；停止项目只停止相应 Worker，不反复初始化 libnode。此变更引入了 Worker/Permission Model 能力门槛，需要 Android 实机验证；失败应明确显示错误。固定 SDK 来源和哈希仍见 apps/mobile/node/README.md。iOS 运行服务不在当前实现范围内。
 
-原 nodejs-mobile 仓库的 Latest 当前指向 18.20.4，Node 18 已结束官方维护，不作为正式版基线。
-社区 fogtape/nodejs-mobile 提供 Node 24 / 26 移植与 Android 原生库，可以作为技术验证候选。
-当前固定采用其 `v24.22.0-0` full Android SDK（上游 prerelease），以 SHA256 校验资产；不是 Node 官方 Android 发行版。
-版本、许可证、构建方式与验证边界见 [Android 宿主说明](apps/mobile/node/README.md)。
+## 7. 服务界面与局域网
 
-优先验证 Node 24 系列，固定通过测试的源码提交、发行资产与 SHA256；桌面采用对应的官方 Node 24 补丁版本。
-需检查源码来源、补丁、构建记录、ABI、16 KB 页兼容、许可证与后续更新来源。
-如果现有资产不能通过验证，先量化修复成本；不要为了接入而长期维护一份大型 Node 分叉。
+主界面不再提供原素材项目 Tab。服务列表显示名称、来源、状态，行尾提供运行/停止、编辑、分享图标与「进入」按钮。端口、监听范围和日志在编辑弹窗；保存运行中服务配置会停止并重新启动。
 
-首次验证只做 arm64 Android 真机：
+默认只监听 127.0.0.1；用户开启局域网后才监听 0.0.0.0。分享使用宿主枚举的真实 IPv4 地址，提供复制与本地生成的二维码；多地址可选择。127.0.0.1、localhost、0.0.0.0 不能作为局域网分享链接。本机「进入」使用 loopback 地址。
 
-1. 从 JNI 在专用线程启动 Node，确认实际版本、模块加载、fs、http 和 HTTPS 客户端可用。
-2. 跑与桌面相同的 Express 示例，提供 JSON API、静态网页与媒体 Range。
-3. 从另一台局域网设备访问，验证接口、上传和页面，不只验证 APK 能编译。
-4. 连续启停业务、重启宿主、切后台、熄屏、网络切换后恢复。
-5. 检查内存、CPU、日志，以及原生库 16 KB 页兼容性。
+管理 RPC 保持鉴权、Origin/Host 检查，并与访客业务端口分离。业务不得反向暴露 service.*、fs.* 或宿主令牌。防火墙、AP 客户端隔离、多个网卡、网络切换和手机后台保持需要实际网络测试。
 
-这一步通过后再投入完整服务管理 UI。首版不承诺运行任意 npm 工程。
+## 8. 每次修改必须验证
 
-## 3. Android 宿主结构
+- core 不导入业务包；默认业务依赖不回流到 core。
+- 新增默认服务只需添加独立目录，目录清单与服务 UI 自动发现。
+- ZIP 正常安装、外包目录、重复名称、缺失入口、路径越界和解压预算。
+- 服务可读写本项目；越界读取/写入被拒；不能 spawn 或创建额外 Worker。
+- HTTP/WS、静态文件、日志、重复启动去重、停止连接与数据跨重启保留。
+- 多服务并存、停止一个不影响另一个；启动/运行失败如实上报。
+- 共用 UI 类型检查和生产构建；桌面、Agent、Android Node bundle 接线检查。
+- Android 真机：受限 Worker、局域网其他设备访问、前后台/熄屏/重启恢复。
 
-```text
-Capacitor 管理界面
-    ↓ 插件桥接 / 进程间管理通道
-Android 前台服务（独立 :node 进程）
-    ↓ JNI 专用线程，进程内启动一次 Node
-Node Supervisor
-    ├── 静态站点 A
-    ├── API 服务 B
-    └── API + 页面服务 C
-```
-
-按 nodejs-mobile 的单实例约束设计：一个 Android 宿主进程只初始化一个 Node 实例。
-停止业务是关闭该业务的 server、连接、定时器和资源，不是反复调用 Node 启动入口。
-必须重启 Node 时，结束并重新创建 :node 宿主进程，而不尝试在同一进程重新初始化。
-Java Service 生命周期与该进程的 Node 生命周期分开管理。
-
-多个业务可以各开端口，也可以挂在共享网关下；首版每个服务一个端口，减少前端 base 路径问题。
-它们在 Android 共用 Node 进程，process.exit、原生崩溃或阻塞事件循环会影响全部业务。
-异常时重启宿主、根据配置恢复服务，并明确记录原因，不宣称每服务完全隔离。
-首版不使用 child_process、cluster 或 worker_threads 作为 Android 必备能力。
-
-前台服务显示运行通知，提供停止全部服务入口；不承诺所有 ROM 下永久存活。
-退出管理页面可继续运行；明确执行“停止宿主”才关闭全部业务。
-系统中断后保留服务定义与数据，恢复时展示服务真实状态。
-
-## 4. 一份后端代码的最小约定
-
-HTTP 框架、文件操作和依赖仍使用 Node API，不另造一套 HTTP/存储 SDK。
-只约定两个生命周期方法：start(context) 和 stop()。
-
-context 至少包含 host、port、dataDir、publicDir 和该服务的配置。
-start 返回实际运行信息，stop 负责关闭 HTTP server、WebSocket、数据库、连接和定时器。
-每个服务持有独立配置对象，不在 Android 共用进程里为不同服务修改 process.env 或 process.chdir。
-
-普通 Express 工程只需把 app 创建、listen 和关闭资源封装成这两个方法。
-已经写成独立入口且无法调整的 Node 项目可在桌面使用脚本模式；Android 首版要求生命周期约定。
-TypeScript 在开发机编译成 JS；依赖在开发机安装并随服务包交付，不在手机运行 npm install。
-可打包兼容的纯 JS 依赖，无法静态打包的资源/模块显式保留，不能假设所有工程都能变成单个 JS。
-
-兼容范围：
-
-- 优先：Express、Node 标准 HTTP/fs/path、经过验证的纯 JS npm 依赖。
-- 单独验证：TLS 证书、原生数据库模块、WebSocket、大文件与长连接。
-- 不默认跨端：child_process、系统命令、Windows 路径、桌面二进制和原生 .node 模块。
-- 原生扩展需要匹配 Android ABI、Node 接口与构建工具链，不能直接复制电脑 node_modules。
-
-## 5. 服务包与数据
-
-```text
-service-package/
-  service.json        # ID、版本、入口、运行时范围、配置 schema
-  server/             # 编译后的后端代码和资源
-  node_modules/       # 必要生产依赖；打包进 JS 的依赖可省略
-  public/             # 前端生产构建资源，可选
-```
-
-服务定义、运行数据和日志在 AnyFrame 数据目录中单独保存，不写回源码包。
-Android 从 SAF / 系统选择器导入后，复制到应用私有目录，再交给 Node 访问。
-content:// 不是普通文件路径；项目媒体按授权复制或通过适配层读取。
-配置含服务 ID、运行设备、端口、监听范围、数据目录、重启策略与挂载设置。
-serviceId 稳定，每次启动生成 runId；持久化定义，运行状态通过当前宿主重新确认。
-
-## 6. 局域网访问与静态挂载
-
-Node 统一处理 HTTP、静态网页与 API，Kotlin 只管理进程、权限、文件导入和通知。
-现有 Kotlin 自检 HTTP 不作为业务 JS 请求的必经转发层。
-
-```text
-http://192.168.1.20:8080/
-  /          前端静态页面
-  /api/*     Node 后端接口
-  /media/*   授权挂载的多媒体项目
-```
-
-通过“仅本机 / 局域网”选择监听范围，默认本机；局域网模式由 Node 监听 0.0.0.0。
-UI 展示真实局域网 IP，提供复制和二维码。固定端口被占用就报错，不静默换端口。
-支持静态文件 MIME、流式传输、Range 与可配置 SPA 回退；缺失资源与 API 不回退 index.html。
-管理 RPC 与业务入口分离，不直接将 service.start、fs.* 暴露给访客。
-远程管理需独立配对和鉴权；业务入口可配置访问口令。
-验证 Windows 私有网络防火墙、Wi-Fi 客户端隔离、多网卡与 IP 变化。
-
-导入后端相当于运行本机程序，只运行可信代码。进程隔离不是安全沙箱，
-现有 NodeFsProvider 的目录限制也不会自动限制业务自己调用 node:fs。
-
-## 7. 服务管理与界面
-
-复用现有 ServiceManager 的日志、启停和退避重启，新增运行适配器、持久化定义、健康检查。
-状态包括 stopped、starting、running、unhealthy、stopping、failed；健康通过后才显示可访问。
-进程启动成功不代表端口已经监听，停止后要验证端口释放。
-
-导航增加“服务”：
-
-- 列表：名称、运行设备、状态、端口和启停按钮。
-- 新建：导入服务包 → 选择设备 → 配置端口/页面/参数 → 校验 → 启动。
-- 详情：概览、配置与挂载、日志。
-- 概览：访问地址、二维码、健康状态、运行时版本与启停重启。
-- 配置：静态目录、授权媒体项目、密钥参数和退出策略。
-- 日志：按服务与 runId 展示，可复制、导出并限制保留量。
-
-“项目”保存素材与分组，“服务”保存可运行部署，两者通过媒体挂载关联。
-桌面侧栏与手机底部导航沿用共享 UI，不按平台重写管理页面。
-
-## 8. 分阶段落地
-
-阶段 A：Android Node 技术验证，同时用同一示例验证桌面；输出可安装 APK、依赖锁定记录和测试结果。
-先确认 Android 运行时可维护，再开展完整产品接入。
-
-阶段 B：抽出 packages/service-host，集中维护 Node Supervisor、服务包加载、静态挂载、健康与日志。
-桌面/Agent 使用子进程 Runner，Android 使用 libnode 适配器；业务与管理协议共享。
-Android 不加载包含 node:child_process 必需依赖的桌面运行适配器。
-
-阶段 C：接入配置持久化和服务 UI，完成导入、启停、重启、局域网发布与媒体挂载。
-至少验证两个服务共存、停止一个不影响另一个、异常恢复、重启后数据保留、端口冲突和日志。
-
-阶段 D：按实际需要增加远程配对、原生数据库、后台系统服务和更多 Android ABI。
-Windows Service / Linux systemd 属于独立后台宿主模式，不与桌面重复拉起同一部署。
-
-维护策略：统一业务源码和依赖锁文件，版本升级先过 Windows/Linux/Android 回归；
-Android 原生补丁限制在 JNI、生命周期和构建接线，不维护自定义 JS 标准库或 Node API 模拟层。
-统一运行时主版本，分别锁定桌面与移动构建来源；依赖升级周期不能等同于每次业务更新。
-
-## 9. 依据与待验证项
-
-- 原 nodejs-mobile 与 FAQ：https://github.com/nodejs-mobile/nodejs-mobile/blob/main/doc_mobile/FAQ.md
-- 原仓库 Latest（当前指向 18.20.4）：https://github.com/nodejs-mobile/nodejs-mobile/releases/latest
-- Node 官方 EOL：https://nodejs.org/en/about/eol
-- 社区 Node 24 / 26 移植候选：https://github.com/fogtape/nodejs-mobile/blob/recipe/README.md
-- 社区发行资产与状态：https://github.com/fogtape/nodejs-mobile/releases
-- Android 原生库页大小：https://developer.android.com/guide/practices/page-sizes
-- Android 前台服务：https://developer.android.com/develop/background-work/services/fgs/service-types
-
-上述社区移植尚未在本项目下载、构建或真机验证，不能据此承诺 npm 全兼容或后台永久运行。
+当前已在 Windows Node 验证包导入、文件权限、HTTP/WS 和持久化；Android 仍需连接真机验证 Worker/Permission Model 和局域网访问。桌面安装包、SEA 成品和 Android APK 的发布前测试不能用本机 Node 测试结果替代。

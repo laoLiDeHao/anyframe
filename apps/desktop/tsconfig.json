@@ -5,6 +5,7 @@
     "types": ["node"],
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "paths": {
+      "@anyframe/service-host": ["../../packages/service-host/src/index.ts"],
       // 两条都要写：paths 的精确键不会自动覆盖子路径导入
       "@anyframe/core": ["../../packages/core/src/index.ts"],
       "@anyframe/core/node": ["../../packages/core/src/node.ts"],

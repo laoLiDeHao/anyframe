@@ -1,7 +1,7 @@
 # Android 内嵌 Node
 
-APK 自带 libnode、JNI 桥和 `host.ts` 的单文件 bundle（含 Express/WS），用户无需安装 Node 或 npm。
-桌面示例使用 Electron 自带的 Node；业务实现共用 `packages/core/src/runtime/express-demo.ts`。
+APK 自带 libnode、JNI 桥和 `host.ts` 的管理器 bundle 和独立 services 目录，用户无需安装 Node 或 npm。
+业务包位于 `services/builtin/<id>/index.js` 与同级 `wwwroot/`，由 `packages/service-host` 的受限 Worker 加载；开发规范见 `SERVICE_HOST_PLAN.md`。Android 的 Worker/Permission Model 仍需真机验证，不支持时拒绝启动，不回退到无文件权限限制模式。
 
 运行链路：Capacitor → 前台 `LocalHttpService`（`:node` 独立进程）→ JNI `node::Start` → Node RPC / ServiceManager。
 管理 RPC 只监听 `127.0.0.1` 的随机端口；启动时随机生成令牌，通过应用私有状态文件和原生桥交付给 WebView。

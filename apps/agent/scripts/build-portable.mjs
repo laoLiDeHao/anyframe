@@ -9,7 +9,7 @@
  * 目标用户是开发者、或企业内网统一下发过 Node 运行时的场景，
  * portable 更合适。CI 里两种都产出，安装页让用户自选。
  */
-import { copyFileSync, mkdirSync, rmSync, writeFileSync, chmodSync, existsSync, statSync } from 'node:fs'
+import { cpSync, copyFileSync, mkdirSync, rmSync, writeFileSync, chmodSync, existsSync, statSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -28,6 +28,7 @@ if (!existsSync(bundle)) {
 
 rmSync(outDir, { recursive: true, force: true })
 mkdirSync(outDir, { recursive: true })
+cpSync(join(appRoot, '../../services/builtin'), join(outDir, 'services'), { recursive: true })
 
 copyFileSync(bundle, join(outDir, 'agent.cjs'))
 

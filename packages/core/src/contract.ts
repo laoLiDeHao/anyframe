@@ -50,7 +50,7 @@ export const CapabilitiesSchema = z.object({
   platform: z.enum(['win32', 'linux', 'darwin', 'android', 'ios', 'web']),
   arch: z.string(),
   version: z.string(),
-  serviceTemplates: z.array(z.literal('express-demo')).optional(),
+  serviceTemplates: z.array(z.string()).optional(),
 
   /**
    * 本地服务能力等级：
@@ -195,7 +195,7 @@ export interface FsProvider {
 // ── 本地服务 ────────────────────────────────────────────────
 
 export const ServiceStartInputSchema = z.object({
-  template: z.literal('express-demo').optional(),
+  template: z.string().regex(/^[a-z0-9][a-z0-9-_]{0,63}$/).optional(),
   /** 服务标识，用于日志与去重 */
   name: z.string().min(1).regex(/^[a-z0-9][a-z0-9-_]{0,63}$/, {
     message: 'name 只能包含小写字母、数字、连字符、下划线',
@@ -265,6 +265,18 @@ export const ServiceLogsOutputSchema = z.object({
 })
 export type ServiceLogsOutput = z.output<typeof ServiceLogsOutputSchema>
 
+export const ServicePackageSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  source: z.enum(['builtin', 'user']),
+})
+export type ServicePackage = z.output<typeof ServicePackageSchema>
+export const ServiceCatalogSchema = z.object({ packages: z.array(ServicePackageSchema) })
+export const ServiceImportSchema = z.object({
+  name: z.string().regex(/^[a-z0-9][a-z0-9-_]{0,63}$/),
+  archive: z.string().max(28 * 1024 * 1024),
+})
+
 // ── 方法表 ──────────────────────────────────────────────────
 
 /**
@@ -283,6 +295,8 @@ export const methods = {
   'service.stop': { in: ServiceStopInputSchema, out: ServiceInfoSchema },
   'service.list': { in: z.void(), out: ServiceListOutputSchema },
   'service.logs': { in: ServiceLogsInputSchema, out: ServiceLogsOutputSchema },
+  'service.catalog': { in: z.void(), out: ServiceCatalogSchema },
+  'service.import': { in: ServiceImportSchema, out: ServicePackageSchema },
 } as const
 
 export type MethodName = keyof typeof methods

@@ -3,20 +3,15 @@ import { WebSocketServer, WebSocket } from 'ws'
 import { createServer } from 'node:http'
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises'
 import { join } from 'node:path'
-import { networkInterfaces } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import type { ServiceInfo, ServiceStartInput } from '../contract.ts'
-import type { ServiceManager, EmbeddedFactory } from './services.ts'
-import { demoPage } from './demo-page.ts'
 
 const noteSchema = z.object({ id: z.string(), text: z.string().min(1).max(2000) })
 const contentSchema = noteSchema.pick({ text: true }).extend({ text: z.string().trim().min(1).max(2000) })
 const chatSchema = z.object({ name: z.string().trim().max(20), text: z.string().trim().min(1).max(500) })
 
-export function demoFactory(dataRoot: string, lanAddresses: string[] = []): EmbeddedFactory {
-  return async ({ host, port, log }) => {
-    const dir = join(dataRoot, 'services', 'express-demo')
+export async function start({ host, port, log, projectDir, publicDir }: { host: string; port: number; log: (text: string) => void; projectDir: string; publicDir: string }) {
+    const dir = projectDir
     await mkdir(dir, { recursive: true })
     const file = join(dir, 'notes.json')
     let notes: z.infer<typeof noteSchema>[] = []
@@ -35,7 +30,7 @@ export function demoFactory(dataRoot: string, lanAddresses: string[] = []): Embe
       next()
     })
     app.use(express.json({ limit: '16kb' }))
-    app.get('/', (_req, res) => res.type('html').send(demoPage))
+    app.use(express.static(publicDir, { dotfiles: 'deny' }))
     app.get('/healthz', (_req, res) => res.json({ ok: true }))
     app.get('/api/notes', (_req, res) => res.json(notes))
     app.all(['/api/notes', '/api/notes/:id'], async (req, res, next) => {
@@ -94,17 +89,8 @@ export function demoFactory(dataRoot: string, lanAddresses: string[] = []): Embe
       server.listen(port, host, () => { server.off('error', reject); resolve() })
     }).catch(error => { wss.close(); throw error })
     const boundPort = (server.address() as { port: number }).port
-    const urls = [`http://127.0.0.1:${boundPort}`]
-    if (host === '0.0.0.0') {
-      const addresses = new Set(lanAddresses)
-      // Android can deny netlink enumeration; the native host supplies its accessible addresses.
-      try { for (const entries of Object.values(networkInterfaces())) for (const n of entries ?? []) {
-        if (n.family === 'IPv4' && !n.internal) addresses.add(n.address)
-      } } catch { log('系统限制网络接口枚举，使用原生宿主提供的地址') }
-      for (const address of addresses) urls.push(`http://${address}:${boundPort}`)
-    }
     log('Express 示例就绪；记事本保存到 ' + file)
-    return { port: boundPort, urls, async close() {
+    return { port: boundPort, async close() {
       for (const client of wss.clients) client.terminate()
       await new Promise<void>(resolve => wss.close(() => resolve()))
       const closing = new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
@@ -113,17 +99,3 @@ export function demoFactory(dataRoot: string, lanAddresses: string[] = []): Embe
       await pending
     } }
   }
-}
-
-const starts = new WeakMap<ServiceManager, Promise<ServiceInfo>>()
-export function startManagedService(manager: ServiceManager, input: ServiceStartInput, dataRoot: string, lanAddresses: string[] = []): Promise<ServiceInfo> {
-  if (input.template !== 'express-demo') return manager.start(input)
-  const active = manager.list().find(s => s.name === 'express-demo' && ['starting', 'running', 'stopping'].includes(s.status))
-  const pending = starts.get(manager)
-  if (pending) return pending
-  if (active) return Promise.resolve(active)
-  const result = manager.start({ ...input, name: 'express-demo', command: undefined }, demoFactory(dataRoot, lanAddresses))
-  starts.set(manager, result)
-  void result.finally(() => starts.delete(manager)).catch(() => {})
-  return result
-}

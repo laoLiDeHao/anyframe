@@ -139,26 +139,6 @@ export function DevicePage({
           </dl>
         </div>
 
-        <div className="af-card">
-          <h2 className="af-section-title">存储</h2>
-          <dl className="af-kv">
-            <dt>方式</dt>
-            <dd>
-              {store
-                ? store.kind === 'disk'
-                  ? '磁盘文件（RPC fs）'
-                  : '浏览器数据库（降级）'
-                : '尚未就绪'}
-            </dd>
-            <dt>位置</dt>
-            <dd>{store?.location ?? '—'}</dd>
-          </dl>
-          <p className="af-muted-2" style={{ marginBottom: 0 }}>
-            {store?.kind === 'disk'
-              ? '素材与 project.json 都写在数据目录下的 AnyFrame/，可以直接用文件管理器打开、备份、拷走。'
-              : '当前把素材存进浏览器 / WebView 的本地数据库：同一台设备刷新还在，换设备或清缓存就没了。'}
-          </p>
-        </div>
 
         <div className="af-card">
           <h2 className="af-section-title">
