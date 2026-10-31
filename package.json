@@ -1,6 +1,6 @@
 {
   "name": "anyframe",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "private": true,
   "description": "一套代码 → Windows 桌面 / Ubuntu 桌面 / Web / Android / iOS 五端构建工程",
   "packageManager": "pnpm@9.15.0",

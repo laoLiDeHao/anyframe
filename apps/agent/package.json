@@ -1,6 +1,6 @@
 {
   "name": "@anyframe/agent",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "private": true,
   "description": "AnyFrame 本地助手 —— Web 版的能力代理，常驻本机 127.0.0.1",
   "type": "module",

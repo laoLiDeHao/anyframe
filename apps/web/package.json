@@ -1,6 +1,6 @@
 {
   "name": "@anyframe/web",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "private": true,
   "type": "module",
   "description": "Web 端（静态站点，配合本地 Agent 获得完整能力）",
