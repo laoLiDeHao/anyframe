@@ -100,6 +100,9 @@ export async function createServiceHost(): Promise<ServiceHost> {
       'service.list': () => ({ services: manager.list() }),
       'service.catalog': () => projects.catalog(),
       'service.import': i => projects.importArchive(i.name, i.archive),
+      'service.update': i => projects.update(i.id, i.name),
+      'service.delete': i => projects.remove(i.id),
+      'service.reorder': i => projects.reorder(i.ids),
       'service.logs': (input) => ({ lines: manager.logs(input.id, input.tail) }),
     },
   })

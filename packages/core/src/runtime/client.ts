@@ -67,10 +67,9 @@ export class RpcClient {
     opts?: { timeoutMs?: number },
   ): Promise<MethodOutput<M>> {
     const ctrl = new AbortController()
-    const timer = setTimeout(
-      () => ctrl.abort(),
-      opts?.timeoutMs ?? this.timeoutMs,
-    )
+    // A zero timeout lets large ZIP imports finish without a fixed time budget.
+    const timeoutMs = opts?.timeoutMs ?? this.timeoutMs
+    const timer = timeoutMs > 0 ? setTimeout(() => ctrl.abort(), timeoutMs) : undefined
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',

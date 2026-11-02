@@ -206,6 +206,9 @@ async function main(): Promise<void> {
           'service.list': () => ({ services: manager.list() }),
           'service.catalog': () => projects.catalog(),
           'service.import': i => projects.importArchive(i.name, i.archive),
+      'service.update': i => projects.update(i.id, i.name),
+      'service.delete': i => projects.remove(i.id),
+      'service.reorder': i => projects.reorder(i.ids),
           'service.logs': (i) => ({ lines: manager.logs(i.id, i.tail) }),
         },
       })

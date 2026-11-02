@@ -236,10 +236,10 @@ body { color: var(--fg); -webkit-font-smoothing: antialiased; }
 .af-service-status.running { color: var(--ok); }
 .af-service-status.starting, .af-service-status.stopping { color: var(--warn); }
 .af-service-status.crashed, .af-service-error { color: var(--danger); overflow-wrap: anywhere; }
-.af-service-actions { display: flex; align-items: center; gap: 6px; }
+.af-service-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .af-service-enter { gap: 6px; margin-left: 10px; text-decoration: none; }
 .af-service-fields { display: grid; gap: 16px; margin-top: 20px; }
-.af-service-fields > label:first-child { display: grid; gap: 8px; }
+.af-service-fields > label:not(.af-service-switch) { display: grid; gap: 8px; }
 .af-service-switch { display: flex; gap: 8px; align-items: center; }
 .af-service-fields p { margin: -6px 0 0; font-size: 12px; }
 .af-service-details { display: grid; grid-template-columns: auto 1fr; gap: 10px 20px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 12px; }
@@ -262,7 +262,8 @@ body { color: var(--fg); -webkit-font-smoothing: antialiased; }
   .af-service-row { gap: 12px; padding: 16px 14px; flex-wrap: wrap; }
   .af-service-avatar { width: 34px; height: 34px; }
   .af-service-info { flex-basis: calc(100% - 50px); }
-  .af-service-actions { margin-left: auto; gap: 8px; }
+  .af-service-actions { margin-left: auto; gap: 4px; }
+  .af-service-actions .af-icon-btn { width: 32px; height: 32px; min-width: 32px; }
   .af-service-status { font-size: 11px; }
   .af-service-enter { margin-left: 4px; }
 }

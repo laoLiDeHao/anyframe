@@ -83,6 +83,16 @@ export class ServiceManager {
     return [...this.services.values()].map((m) => m.info)
   }
 
+  /** Remove stopped run history after uninstalling a project. */
+  forget(name: string): void {
+    for (const [id, managed] of this.services) {
+      if (managed.info.name !== name) continue
+      if (['starting', 'running', 'stopping'].includes(managed.info.status)) throw Error('服务尚未停止')
+      if (managed.timer) clearTimeout(managed.timer)
+      this.services.delete(id)
+    }
+  }
+
   logs(id: string, tail: number): ServiceLogLine[] {
     return (this.services.get(id)?.logs ?? []).slice(-tail)
   }

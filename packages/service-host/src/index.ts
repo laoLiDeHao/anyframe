@@ -56,7 +56,7 @@ export class ProjectServiceHost {
         if (file === 'data' || file === 'service.json') throw invalid('默认服务包不得包含运行数据或宿主元数据')
         await cp(join(source, file), join(target, file), { recursive: true, force: true })
       }
-      await writeFile(join(target, 'service.json'), JSON.stringify({ id: entry.name, name: entry.name, source: 'builtin' }))
+      await writeFile(join(target, 'service.json'), JSON.stringify({ id: entry.name, name: (await this.catalog()).packages.find(p => p.id === entry.name)?.name ?? entry.name, source: 'builtin' }))
     }
   }
   async catalog(): Promise<{ packages: ServicePackage[] }> {
@@ -68,6 +68,11 @@ export class ProjectServiceHost {
         if (info.id === entry.name && ['builtin', 'user'].includes(info.source)) packages.push({ id: entry.name, name: String(info.name), source: info.source })
       } catch { /* Incomplete installs and legacy data-only directories aren't runnable. */ }
     }
+    let order: string[] = []
+    try { order = JSON.parse(await readFile(join(this.root, '.order.json'), 'utf8')) }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
+    const position = (id: string) => { const n = order.indexOf(id); return n < 0 ? order.length : n }
+    packages.sort((a, b) => position(a.id) - position(b.id) || a.id.localeCompare(b.id))
     return { packages }
   }
   async start(input: ServiceStartInput): Promise<ServiceInfo> {
@@ -87,14 +92,59 @@ export class ProjectServiceHost {
     this.starts.set(id, work)
     try { return await work } finally { this.starts.delete(id) }
   }
-  async importArchive(name: string, archive: string): Promise<ServicePackage> {
+  private serialize<T>(work: () => Promise<T>): Promise<T> {
+    const result = this.launches.then(work)
+    this.launches = result.catch(() => {})
+    return result
+  }
+  private async package(id: string): Promise<ServicePackage> {
+    if (!validId.test(id)) throw invalid('无效的服务标识')
+    const item = (await this.catalog()).packages.find(p => p.id === id)
+    if (!item) throw Object.assign(Error('服务包不存在'), { code: 'NOT_FOUND' })
+    await validateTree(join(this.root, id), false)
+    return item
+  }
+  private async atomicJson(file: string, value: unknown) {
+    const temp = file + '.' + randomUUID() + '.tmp'
+    try { await writeFile(temp, JSON.stringify(value)); await rename(temp, file) }
+    finally { await rm(temp, { force: true }) }
+  }
+  update(id: string, name: string): Promise<ServicePackage> {
+    return this.serialize(async () => {
+      if (!name.trim() || name.trim().length > 128) throw invalid('显示名称需为 1–128 个字符')
+      const info = { ...await this.package(id), name: name.trim() }
+      await this.atomicJson(join(this.root, id, 'service.json'), info)
+      return info
+    })
+  }
+  remove(id: string): Promise<void> {
+    return this.serialize(async () => {
+      const info = await this.package(id)
+      if (info.source !== 'user') throw invalid('系统默认服务不可删除')
+      for (const service of this.manager.list().filter(s => s.name === id)) await this.manager.stop(service.id)
+      // Rename first so the package disappears atomically from the runnable catalog.
+      const trash = join(this.root, '.delete-' + randomUUID())
+      await rename(join(this.root, id), trash)
+      this.manager.forget(id)
+      await rm(trash, { recursive: true, force: true })
+    })
+  }
+  reorder(ids: string[]): Promise<{ packages: ServicePackage[] }> {
+    return this.serialize(async () => {
+      const { packages } = await this.catalog()
+      if (ids.length !== packages.length || new Set(ids).size !== ids.length || packages.some(p => !ids.includes(p.id))) throw invalid('服务列表已变化，请刷新后重新排序')
+      await this.atomicJson(join(this.root, '.order.json'), ids)
+      return this.catalog()
+    })
+  }
+  importArchive(name: string, archive: string): Promise<ServicePackage> {
+    return this.serialize(() => this.installArchive(name, archive))
+  }
+  private async installArchive(name: string, archive: string): Promise<ServicePackage> {
     if (!validId.test(name)) throw invalid('服务名称只能包含小写字母、数字、连字符和下划线')
     const bytes = Buffer.from(archive, 'base64')
-    if (bytes.length === 0 || bytes.length > 20 * 1024 * 1024) throw invalid('ZIP 文件需小于 20 MB')
-    let total = 0, count = 0
+    if (bytes.length === 0) throw invalid('ZIP 文件不能为空')
     const files = unzipSync(bytes, { filter(file) {
-      count++; total += file.originalSize
-      if (count > 2000 || total > 64 * 1024 * 1024 || file.originalSize > 16 * 1024 * 1024) throw invalid('ZIP 解压大小或文件数量超限')
       const parts = file.name.replace(/\/$/, '').split('/')
       if (parts.some(part => !part || part === '.' || part === '..' || /[\\:<>"|?*\x00-\x1f]/.test(part) || /[. ]$/.test(part) || /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\.|$)/i.test(part))) throw invalid('ZIP 包含不安全路径')
       return true

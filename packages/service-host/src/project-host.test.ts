@@ -2,8 +2,9 @@ import { beforeEach, afterEach, describe, it, expect } from 'vitest'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { randomBytes } from 'node:crypto'
 import { zipSync, strToU8 } from 'fflate'
-import { ServiceManager, ServiceStartInputSchema } from '@anyframe/core/node'
+import { ServiceManager, ServiceStartInputSchema, startRpcServer } from '@anyframe/core/node'
 import { ProjectServiceHost } from './index.ts'
 
 const entry = `const fs = require('node:fs'); const path = require('node:path'); const http = require('node:http');
@@ -73,9 +74,36 @@ describe('project packages', () => {
     await projects.importArchive('valid', archive({ 'index.js': entry, 'wwwroot/index.html': 'x' }))
     expect((await projects.start(ServiceStartInputSchema.parse({ name: 'valid' }))).status).toBe('running')
   })
-  it('rejects an archive that exceeds the expanded file budget', async () => {
-    const zip = Buffer.from(zipSync({ 'index.js': new Uint8Array(17 * 1024 * 1024), 'wwwroot/index.html': strToU8('x') })).toString('base64')
-    await expect(projects.importArchive('bomb', zip)).rejects.toThrow('超限')
+  it('imports beyond all former ZIP budgets through HTTP RPC', async () => {
+    const files: Record<string, Uint8Array> = { 'index.js': strToU8(entry), 'wwwroot/index.html': strToU8('x'), 'large.bin': randomBytes(25 * 1024 * 1024), 'expanded.bin': new Uint8Array(41 * 1024 * 1024) }
+    for (let i = 0; i < 2001; i++) files['wwwroot/files/' + i] = strToU8('x')
+    const zip = Buffer.from(zipSync(files, { level: 1 })).toString('base64')
+    expect(zip.length).toBeGreaterThan(32 * 1024 * 1024)
+    const rpc = await startRpcServer({ host: '127.0.0.1', port: 0, token: 'test', handlers: { 'service.import': i => projects.importArchive(i.name, i.archive) } })
+    try {
+      const response = await fetch(rpc.url + '/rpc/service.import', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-anyframe-token': 'test' }, body: JSON.stringify({ name: 'large', archive: zip }) })
+      expect(response.status).toBe(200)
+      expect((await readFile(join(root, 'services/large/expanded.bin'))).length).toBe(41 * 1024 * 1024)
+      expect((await projects.catalog()).packages.map(p => p.id)).toEqual(['large'])
+    } finally { await rpc.close() }
+  }, 60000)
+  it('persists names and ordering, validates stale ordering, and deletes running services with their data', async () => {
+    const zip = archive({ 'index.js': entry, 'wwwroot/index.html': 'x' })
+    await projects.importArchive('first', zip); await projects.importArchive('second', zip)
+    await projects.update('first', '新名称')
+    await projects.reorder(['second', 'first'])
+    const restored = new ProjectServiceHost(manager, { dataRoot: root, builtinRoot: builtin })
+    expect((await restored.catalog()).packages.map(p => [p.id, p.name])).toEqual([['second', 'second'], ['first', '新名称']])
+    await expect(projects.reorder(['first', 'first'])).rejects.toThrow('列表已变化')
+    await expect(projects.update('../escape', 'x')).rejects.toThrow('无效')
+    const run = await projects.start(ServiceStartInputSchema.parse({ name: 'first' }))
+    await projects.remove('first')
+    expect(manager.list()).toHaveLength(0)
+    await expect(fetch(run.urls![0]!)).rejects.toThrow()
+    await expect(readFile(join(root, 'services/first/own.txt'))).rejects.toThrow()
+    expect((await restored.catalog()).packages.map(p => p.id)).toEqual(['second'])
+    await projects.importArchive('first', zip)
+    expect((await projects.start(ServiceStartInputSchema.parse({ name: 'first' }))).status).toBe('running')
   })
   it('discovers new built-ins from folders without a host code change and preserves data on refresh', async () => {
     await mkdir(join(builtin, 'new-default/wwwroot'), { recursive: true })
@@ -85,6 +113,9 @@ describe('project packages', () => {
     await writeFile(join(root, 'services/new-default/notes.json'), 'saved')
     await projects.initialize()
     expect(await readFile(join(root, 'services/new-default/notes.json'), 'utf8')).toBe('saved')
-    expect((await projects.catalog()).packages[0]?.id).toBe('new-default')
+    await projects.update('new-default', '默认服务新名称')
+    await projects.initialize()
+    expect((await projects.catalog()).packages[0]?.name).toBe('默认服务新名称')
+    await expect(projects.remove('new-default')).rejects.toThrow('不可删除')
   })
 })

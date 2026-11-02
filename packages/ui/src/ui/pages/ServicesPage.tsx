@@ -9,7 +9,7 @@ import { lanUrls, localUrl, parsePort } from './service-links.ts'
 
 const labels: Record<ServiceInfo['status'], string> = { starting: '启动中', running: '运行中', stopping: '停止中', stopped: '已停止', crashed: '启动失败' }
 type Settings = { lan: boolean; port: string }
-type Dialog = { kind: 'edit' | 'share'; name: string } | null
+type Dialog = { kind: 'edit' | 'share' | 'delete'; name: string } | null
 const isLive = (service?: ServiceInfo) => !!service && ['running', 'starting', 'stopping'].includes(service.status)
 
 function Icon({ kind }: { kind: 'play' | 'stop' | 'edit' | 'share' | 'enter' | 'service' }) {
@@ -33,6 +33,7 @@ export function ServicesPage({ frame, host }: { frame: ShellFrame; host: HostSes
   const [services, setServices] = useState<ServiceInfo[]>([])
   const [logs, setLogs] = useState<ServiceLogLine[]>([])
   const [settings, setSettings] = useState<Record<string, Settings>>({})
+  const [displayName, setDisplayName] = useState('')
   const [draft, setDraft] = useState<Settings>({ lan: false, port: '' })
   const [dialog, setDialog] = useState<Dialog>(null)
   const [shareUrl, setShareUrl] = useState('')
@@ -53,7 +54,7 @@ export function ServicesPage({ frame, host }: { frame: ShellFrame; host: HostSes
   const selectedUrl = urls.includes(shareUrl) ? shareUrl : urls[0] ?? ''
   const close = () => { if (!busy) { setDialog(null); setError('') } }
   const config = (name: string): Settings => settings[name] ?? { lan: latest.get(name)?.host === '0.0.0.0', port: latest.get(name)?.port.toString() ?? '' }
-  function edit(name: string) { setDraft(config(name)); setError(''); setDialog({ kind: 'edit', name }) }
+  function edit(name: string) { setDisplayName(titleOf(name)); setDraft(config(name)); setError(''); setDialog({ kind: 'edit', name }) }
 
   useEffect(() => {
     setServices([]); setPackages([]); setDialog(null); setError('')
@@ -118,6 +119,7 @@ export function ServicesPage({ frame, host }: { frame: ShellFrame; host: HostSes
   async function save() {
     if (!dialog) return
     parsePort(draft.port)
+    await client!.call('service.update', { id: dialog.name, name: displayName })
     const next = { ...settings, [dialog.name]: draft }
     localStorage.setItem(settingsKey, JSON.stringify(next))
     setSettings(next)
@@ -125,6 +127,22 @@ export function ServicesPage({ frame, host }: { frame: ShellFrame; host: HostSes
       await client!.call('service.stop', { id: current!.id })
       await start(dialog.name, draft)
     }
+    setDialog(null)
+  }
+
+  async function move(name: string, offset: number) {
+    const ids = packages.map(p => p.id)
+    const index = ids.indexOf(name), target = index + offset
+    if (index < 0 || target < 0 || target >= ids.length) return
+    ;[ids[index], ids[target]] = [ids[target]!, ids[index]!]
+    await client!.call('service.reorder', { ids })
+  }
+  async function remove() {
+    if (!dialog) return
+    await client!.call('service.delete', { id: dialog.name })
+    const next = { ...settings }; delete next[dialog.name]
+    setSettings(next)
+    localStorage.setItem(settingsKey, JSON.stringify(next))
     setDialog(null)
   }
 
@@ -152,6 +170,9 @@ export function ServicesPage({ frame, host }: { frame: ShellFrame; host: HostSes
           <div className="af-service-info"><strong>{title}</strong><span className="af-service-description">{packages.find(p => p.id === name)?.source === 'builtin' ? '系统默认服务' : '自定义服务'}</span></div>
           <span className={`af-service-status ${service?.status ?? 'stopped'}`}><i />{service ? labels[service.status] : '未运行'}</span>
           <div className="af-service-actions">
+            <button className="af-icon-btn" title="上移" aria-label={'上移' + title} disabled={!supported || busy || !canEdit || packages[0]?.id === name} onClick={() => void action(() => move(name, -1))}>↑</button>
+            <button className="af-icon-btn" title="下移" aria-label={'下移' + title} disabled={!supported || busy || !canEdit || packages.at(-1)?.id === name} onClick={() => void action(() => move(name, 1))}>↓</button>
+            {packages.find(p => p.id === name)?.source === 'user' && <button className="af-icon-btn af-service-error" title="删除" aria-label={'删除' + title} disabled={!supported || busy || transitioning} onClick={() => { setError(''); setDialog({ kind: 'delete', name }) }}>×</button>}
             <button className="af-icon-btn" title={runLabel} aria-label={`${runLabel}${title}`} disabled={!supported || busy || transitioning || (!live && !canEdit)} onClick={() => void action(() => live ? client!.call('service.stop', { id: service!.id }) : start(name, config(name)))}><Icon kind={live ? 'stop' : 'play'} /></button>
             <button className="af-icon-btn" title="编辑" aria-label={`编辑${title}`} disabled={busy} onClick={() => edit(name)}><Icon kind="edit" /></button>
             <button className="af-icon-btn" title="分享" aria-label={`分享${title}`} disabled={busy} onClick={() => { setShareUrl(''); setCopied(false); setError(''); setDialog({ kind: 'share', name }) }}><Icon kind="share" /></button>
@@ -167,18 +188,25 @@ export function ServicesPage({ frame, host }: { frame: ShellFrame; host: HostSes
       <button className="af-btn af-btn-primary" disabled={busy || !archive || !importName} onClick={() => void action(async () => {
         if (!archive) return
         if (!/^[a-z0-9][a-z0-9-_]{0,63}$/.test(importName)) throw Error('服务名称只能包含小写字母、数字、连字符和下划线')
-        if (archive.size > 20 * 1024 * 1024) throw Error('ZIP 文件需小于 20 MB')
         const data = new Uint8Array(await archive.arrayBuffer())
         let binary = ''
         for (let i = 0; i < data.length; i += 8192) binary += String.fromCharCode(...data.subarray(i, i + 8192))
-        await client!.call('service.import', { name: importName, archive: btoa(binary) })
+        await client!.call('service.import', { name: importName, archive: btoa(binary) }, { timeoutMs: 0 })
         setImporting(false)
       })}>{busy ? '导入中…' : '导入'}</button>
     </>}>
       {error && <p role="alert" className="af-service-error">{error}</p>}
       <div className="af-service-fields"><label>服务名称<input className="af-input" value={importName} maxLength={64} disabled={busy} placeholder="my-service" onChange={e => setImportName(e.target.value)} /></label>
       <input ref={uploadRef} type="file" accept=".zip,application/zip" disabled={busy} onChange={e => { const file = e.target.files?.[0] ?? null; setArchive(file); if (file && !importName) setImportName(file.name.replace(/\.zip$/i, '').toLowerCase().replace(/[^a-z0-9-_]/g, '-').slice(0, 64)) }} aria-label="ZIP 服务包" />
-      <p className="af-muted-2">最大 20 MB。导入后可在列表中配置并运行。</p></div>
+      <p className="af-muted-2">不设固定包体大小限制。导入后可配置、排序和删除。</p></div>
+    </Modal>}
+
+    {dialog?.kind === 'delete' && <Modal title="删除服务" desc={titleOf(dialog.name)} onClose={close} actions={<>
+      <button className="af-btn af-btn-ghost" disabled={busy} onClick={close}>取消</button>
+      <button className="af-btn" disabled={busy} onClick={() => void action(remove)}>{busy ? '删除中…' : '确认删除'}</button>
+    </>}>
+      <p>将停止此服务，并永久删除服务包及其全部运行数据。此操作无法撤销。</p>
+      {error && <p role="alert" className="af-service-error">{error}</p>}
     </Modal>}
 
     {dialog?.kind === 'edit' && <Modal title="编辑服务" desc={titleOf(dialog.name)} onClose={close} actions={<>
@@ -187,6 +215,7 @@ export function ServicesPage({ frame, host }: { frame: ShellFrame; host: HostSes
     </>}>
       {error && <p role="alert" className="af-service-error">{error}</p>}
       <div className="af-service-fields">
+        <label>显示名称<input className="af-input" value={displayName} maxLength={128} disabled={busy || !editable(dialog.name)} onChange={e => setDisplayName(e.target.value)} /></label>
         <label>端口<input className="af-input" type="number" min="1024" max="65535" placeholder="自动选择" value={draft.port} disabled={busy || !editable(dialog.name)} onChange={e => setDraft({ ...draft, port: e.target.value })} /></label>
         <label className="af-service-switch"><input type="checkbox" checked={draft.lan} disabled={busy || !editable(dialog.name)} onChange={e => setDraft({ ...draft, lan: e.target.checked })} />允许局域网访问</label>
         <p className="af-muted-2">开启后，同一网络的设备可以访问笔记和加入聊天。{isLive(current) ? '保存设置会重启服务。' : '设置将在下次运行时生效。'}</p>

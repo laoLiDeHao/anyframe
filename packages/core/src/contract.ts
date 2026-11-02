@@ -274,7 +274,7 @@ export type ServicePackage = z.output<typeof ServicePackageSchema>
 export const ServiceCatalogSchema = z.object({ packages: z.array(ServicePackageSchema) })
 export const ServiceImportSchema = z.object({
   name: z.string().regex(/^[a-z0-9][a-z0-9-_]{0,63}$/),
-  archive: z.string().max(28 * 1024 * 1024),
+  archive: z.string().min(1),
 })
 
 // ── 方法表 ──────────────────────────────────────────────────
@@ -297,6 +297,9 @@ export const methods = {
   'service.logs': { in: ServiceLogsInputSchema, out: ServiceLogsOutputSchema },
   'service.catalog': { in: z.void(), out: ServiceCatalogSchema },
   'service.import': { in: ServiceImportSchema, out: ServicePackageSchema },
+  'service.update': { in: z.object({ id: z.string(), name: z.string().trim().min(1).max(128) }), out: ServicePackageSchema },
+  'service.delete': { in: z.object({ id: z.string() }), out: z.void() },
+  'service.reorder': { in: z.object({ ids: z.array(z.string()) }), out: ServiceCatalogSchema },
 } as const
 
 export type MethodName = keyof typeof methods

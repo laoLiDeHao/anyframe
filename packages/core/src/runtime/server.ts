@@ -209,10 +209,10 @@ export async function startRpcServer(
       return
     }
 
-    // 限制请求体大小，防止内存打爆（文件写入应走分片）
+    // 普通 RPC 保留请求体上限；已鉴权的 ZIP 导入不设固定包体限制。
     const chunks: Buffer[] = []
     let size = 0
-    const MAX_BODY = 32 * 1024 * 1024
+    const MAX_BODY = method === 'service.import' ? Infinity : 32 * 1024 * 1024
     for await (const chunk of req) {
       size += chunk.length
       if (size > MAX_BODY) {
